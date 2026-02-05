@@ -2,117 +2,456 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SurveyGrid Pro</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>SurveyGrid Mobile Tool</title>
+    
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+    
     <style>
-        body { margin: 0; font-family: sans-serif; }
-        #map { height: 100vh; width: 100vw; }
-        .controls {
-            position: absolute; top: 10px; left: 10px; z-index: 1000;
-            background: white; padding: 15px; border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2); width: 250px;
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        #map { position: absolute; top: 0; bottom: 0; width: 100%; z-index: 1; }
+        
+        /* Floating UI Controls */
+        .ui-panel {
+            position: absolute; bottom: 20px; left: 10px; right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px; border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            z-index: 1000;
+            max-height: 40vh;
+            overflow-y: auto;
+            display: flex; flex-direction: column; gap: 10px;
         }
-        .control-group { margin-bottom: 10px; }
-        label { display: block; font-size: 12px; color: #666; }
-        input { width: 100%; margin-top: 4px; }
-        button { 
-            width: 100%; padding: 10px; background: #007bff; 
-            color: white; border: none; border-radius: 4px; cursor: pointer;
-            margin-top: 10px;
+
+        .tool-bar {
+            position: absolute; top: 10px; right: 10px;
+            z-index: 1000; display: flex; flex-direction: column; gap: 8px;
         }
-        button:hover { background: #0056b3; }
-        .export-btn { background: #28a745; }
+
+        button {
+            background: #007AFF; color: white; border: none; padding: 12px;
+            border-radius: 8px; font-weight: 600; cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        button.secondary { background: #5856D6; }
+        button.danger { background: #FF3B30; }
+        button:active { transform: translateY(1px); }
+
+        .input-group { display: flex; gap: 10px; align-items: center; }
+        label { flex: 1; font-size: 14px; font-weight: 500; }
+        input[type="number"], input[type="text"] {
+            width: 70px; padding: 8px; border: 1px solid #ccc; border-radius: 6px;
+        }
+        
+        /* Custom Grip Styles */
+        .grip-icon {
+            background: white; border: 2px solid #007AFF;
+            border-radius: 50%; width: 16px; height: 16px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        .grip-rotate { border-color: #FF9500; cursor: grab; }
+        .grip-resize { border-color: #34C759; cursor: nwse-resize; }
+
     </style>
 </head>
 <body>
 
-<div class="controls">
-    <h3>SurveyGrid Tool</h3>
-    <div class="control-group">
-        <label>Grid Spacing (m)</label>
-        <input type="number" id="spacing" value="10">
+    <div id="map"></div>
+
+    <div class="tool-bar">
+        <button onclick="locateUser()" title="GPS Location">📍 GPS</button>
+        <button onclick="toggleBoundaryMode()" id="btn-boundary">✏️ Draw Boundary</button>
+        <button onclick="alignGridNorth()" title="Align to OS North">⬆️ True North</button>
     </div>
-    <div class="control-group">
-        <label>Rotation (°)</label>
-        <input type="range" id="rotation" min="0" max="360" value="0">
+
+    <div class="ui-panel">
+        <h3 style="margin:0 0 5px 0;">Site Setup</h3>
+        
+        <div class="input-group">
+            <label>Grid Spacing (m)</label>
+            <input type="number" id="gridSpacing" value="10" onchange="updateGrid()">
+        </div>
+
+        <div class="input-group">
+            <label>Export Relative?</label>
+            <input type="checkbox" id="relativeCoords">
+        </div>
+
+        <button onclick="exportDXF()">💾 Export DXF (OSGB36)</button>
+        <div id="status" style="font-size: 11px; color: #666; margin-top:5px;">Ready.</div>
     </div>
-    <button onclick="setGridCenter()">Place Grid at Center</button>
-    <button class="export-btn" onclick="exportDXF()">Export DXF (OSGB36)</button>
-    <p style="font-size: 10px; color: #888;">Note: Proj4 handles WGS84 to OSGB36 conversion for DXF output.</p>
-</div>
 
-<div id="map"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
 
-<script>
-    // Define OSGB36 projection for Export
-    proj4.defs("EPSG:27700", "+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs");
+    <script>
+        // --- 1. CONFIGURATION & PROJ4 SETUP ---
+        
+        // Define OSGB36 (EPSG:27700) definition
+        // Note: This is the standard definition. For 'perfect' OSTN15, a grid file is needed.
+        proj4.defs("EPSG:27700","+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs");
+        const WGS84 = "EPSG:4326";
+        const OSGB36 = "EPSG:27700";
 
-    const map = L.map('map').setView([51.505, -0.09], 13);
-    
-    const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-        attribution: 'Tiles &copy; Esri'
-    }).addTo(map);
+        // --- 2. MAP INITIALIZATION ---
+        
+        const map = L.map('map').setView([51.505, -0.09], 18); // Default to London
 
-    let gridLayer = L.layerGroup().addTo(map);
-    let centerMarker;
+        // Esri World Imagery (Satellite)
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+            maxZoom: 21
+        }).addTo(map);
 
-    function setGridCenter() {
-        const center = map.getCenter();
-        if (centerMarker) map.removeLayer(centerMarker);
-        centerMarker = L.marker(center, {draggable: true}).addTo(map);
-        centerMarker.on('drag', drawGrid);
-        drawGrid();
-    }
+        // Geocoder Control
+        L.Control.geocoder({
+            defaultMarkGeocode: false
+        })
+        .on('markgeocode', function(e) {
+            const bbox = e.geocode.bbox;
+            const poly = L.polygon([
+                bbox.getSouthEast(),
+                bbox.getNorthEast(),
+                bbox.getNorthWest(),
+                bbox.getSouthWest()
+            ]);
+            map.fitBounds(poly.getBounds());
+            // Move grid to search result
+            gridState.center = e.geocode.center;
+            updateGrid();
+        })
+        .addTo(map);
 
-    function drawGrid() {
-        gridLayer.clearLayers();
-        if (!centerMarker) return;
+        // --- 3. STATE MANAGEMENT ---
 
-        const center = centerMarker.getLatLng();
-        const spacing = parseFloat(document.getElementById('spacing').value) / 111320; // Approx meters to deg
-        const rotation = document.getElementById('rotation').value * (Math.PI / 180);
+        let gridState = {
+            center: map.getCenter(),
+            width: 50,  // meters
+            height: 50, // meters
+            rotation: 0, // radians
+            spacing: 10 // meters
+        };
 
-        // Simple 5x5 grid visualization
-        for (let i = -2; i <= 2; i++) {
-            for (let j = -2; j <= 2; j++) {
-                const lat = center.lat + (i * spacing);
-                const lng = center.lng + (j * spacing);
-                
-                L.circle([lat, lng], {radius: 1, color: 'blue'}).addTo(gridLayer);
+        let boundaryPoints = [];
+        let isDrawingBoundary = false;
+
+        // Layer Groups
+        const gridLayer = L.layerGroup().addTo(map);
+        const boundaryLayer = L.layerGroup().addTo(map);
+        const gripLayer = L.layerGroup().addTo(map);
+
+        // --- 4. GRID LOGIC ---
+
+        function updateGrid() {
+            gridLayer.clearLayers();
+            gripLayer.clearLayers();
+            
+            const spacing = parseFloat(document.getElementById('gridSpacing').value) || 10;
+            gridState.spacing = spacing;
+
+            // Calculate corners based on center, width, height, rotation
+            const corners = getRectCorners(gridState.center, gridState.width, gridState.height, gridState.rotation);
+
+            // Draw Boundary of Grid
+            L.polygon(corners, {color: '#007AFF', weight: 2, fill: false, dashArray: '5, 5'}).addTo(gridLayer);
+
+            // Draw Internal Grid Lines
+            drawInternalGrid(corners);
+
+            // Add Interactive Grips
+            addGrips(corners);
+        }
+
+        function drawInternalGrid(corners) {
+            // This is a simplified visual representation for the browser. 
+            // The actual DXF export calculates these mathematically to be precise.
+            
+            // Vector logic to interpolate points along edges
+            const stepsX = Math.floor(gridState.width / gridState.spacing);
+            const stepsY = Math.floor(gridState.height / gridState.spacing);
+
+            // Helper to interpolate
+            const lerp = (p1, p2, t) => L.latLng(
+                p1.lat + (p2.lat - p1.lat) * t,
+                p1.lng + (p2.lng - p1.lng) * t
+            );
+
+            // Vertical lines
+            for(let i=1; i<=stepsX; i++) {
+                const t = (i * gridState.spacing) / gridState.width;
+                const p1 = lerp(corners[0], corners[1], t); // Bottom edge
+                const p2 = lerp(corners[3], corners[2], t); // Top edge
+                L.polyline([p1, p2], {color: '#007AFF', weight: 1, opacity: 0.5}).addTo(gridLayer);
+            }
+
+            // Horizontal lines
+            for(let i=1; i<=stepsY; i++) {
+                const t = (i * gridState.spacing) / gridState.height;
+                const p1 = lerp(corners[0], corners[3], t); // Left edge
+                const p2 = lerp(corners[1], corners[2], t); // Right edge
+                L.polyline([p1, p2], {color: '#007AFF', weight: 1, opacity: 0.5}).addTo(gridLayer);
             }
         }
-    }
 
-    function exportDXF() {
-        if (!centerMarker) {
-            alert("Place a grid first!");
-            return;
+        // Math helper to get corners from center/dims/rotation
+        function getRectCorners(center, w, h, angle) {
+            // Convert meters to lat/lng degrees (approximate for visual rendering)
+            // 1 deg lat ~= 111132m. 1 deg lng ~= 111320m * cos(lat)
+            const metersToLat = 1 / 111132;
+            const metersToLng = 1 / (111320 * Math.cos(center.lat * Math.PI / 180));
+
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+
+            const dx = w / 2;
+            const dy = h / 2;
+
+            const offsets = [
+                {x: -dx, y: -dy}, // BL
+                {x: dx, y: -dy},  // BR
+                {x: dx, y: dy},   // TR
+                {x: -dx, y: dy}   // TL
+            ];
+
+            return offsets.map(o => {
+                // Rotate
+                const rx = o.x * cos - o.y * sin;
+                const ry = o.x * sin + o.y * cos;
+                // Convert to lat/lng and add to center
+                return L.latLng(
+                    center.lat + ry * metersToLat,
+                    center.lng + rx * metersToLng
+                );
+            });
         }
-        
-        const pos = centerMarker.getLatLng();
-        const osgb = proj4("EPSG:4326", "EPSG:27700", [pos.lng, pos.lat]);
-        
-        let dxfContent = `0\nSECTION\n2\nENTITIES\n`;
-        // Dummy DXF point for the center
-        dxfContent += `0\nPOINT\n8\nGRID_LAYER\n10\n${osgb[0]}\n20\n${osgb[1]}\n30\n0.0\n62\n5\n`;
-        dxfContent += `0\nENDSEC\n0\nEOF`;
 
-        const blob = new Blob([dxfContent], {type: 'application/dxf'});
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = "survey_export.dxf";
-        link.click();
-    }
+        function addGrips(corners) {
+            // Rotation Grip (Top Right)
+            const rotGrip = L.marker(corners[2], {
+                draggable: true,
+                icon: L.divIcon({className: 'grip-icon grip-rotate', iconSize: [16,16]})
+            }).addTo(gripLayer);
 
-    document.getElementById('rotation').oninput = drawGrid;
-    document.getElementById('spacing').oninput = drawGrid;
+            rotGrip.on('drag', (e) => {
+                const newPos = e.latlng;
+                const center = gridState.center;
+                // Calculate angle between center and new pos
+                const dy = newPos.lat - center.lat;
+                const dx = (newPos.lng - center.lng) * Math.cos(center.lat * Math.PI/180); // Adjust for longitude
+                
+                // Simple atan2 for rotation
+                // Note: Visual rotation only. Real world meters calculation happens in logic.
+                let angle = Math.atan2(dy, dx); 
+                // Offset because corner is at 45deg relative to unrotated rect
+                // Actually, let's just use the visual angle for simplicity in this demo
+                gridState.rotation = -Math.atan2(dx, dy) + (Math.PI/4); // Rough approximation for UI feel
+                
+                // Also update size based on distance? Let's keep it simple: Rotation only
+                updateGrid();
+            });
 
-    // GPS Location
-    map.locate({setView: true, maxZoom: 16});
-</script>
+            // Resize Grip (Top Right - same corner, different mode logic if we wanted, 
+            // but for simplicity, let's add a separate resize handle at Top Left)
+            const resizeGrip = L.marker(corners[3], {
+                draggable: true,
+                icon: L.divIcon({className: 'grip-icon grip-resize', iconSize: [16,16]})
+            }).addTo(gripLayer);
 
+            resizeGrip.on('drag', (e) => {
+                const dist = map.distance(gridState.center, e.latlng);
+                // Pythagorean approx to keep aspect ratio or just set size
+                // Setting square size based on radius from center * 1.414
+                const size = (dist * 2) / 1.414;
+                gridState.width = size;
+                gridState.height = size;
+                updateGrid();
+            });
+
+            // Center Draggable
+            const centerGrip = L.marker(gridState.center, {
+                draggable: true,
+                icon: L.divIcon({className: 'grip-icon', html: '<div style="background:red; width:10px; height:10px; border-radius:50%;"></div>'})
+            }).addTo(gripLayer);
+            
+            centerGrip.on('drag', (e) => {
+                gridState.center = e.latlng;
+                updateGrid();
+            });
+        }
+
+        function alignGridNorth() {
+            // In OSGB36, True North is aligned with the Grid North at the central meridian.
+            // For this tool, we reset rotation to 0.
+            gridState.rotation = 0;
+            updateGrid();
+            document.getElementById('status').innerText = "Grid aligned to North.";
+        }
+
+        // --- 5. BOUNDARY LOGIC ---
+
+        function toggleBoundaryMode() {
+            isDrawingBoundary = !isDrawingBoundary;
+            const btn = document.getElementById('btn-boundary');
+            if(isDrawingBoundary) {
+                btn.style.background = '#34C759';
+                btn.innerText = 'Stop Drawing';
+                map.getContainer().style.cursor = 'crosshair';
+            } else {
+                btn.style.background = '#007AFF';
+                btn.innerText = '✏️ Draw Boundary';
+                map.getContainer().style.cursor = '';
+            }
+        }
+
+        map.on('click', (e) => {
+            if(!isDrawingBoundary) return;
+            boundaryPoints.push(e.latlng);
+            redrawBoundary();
+        });
+
+        // Right click to remove last point
+        map.on('contextmenu', (e) => {
+            if(!isDrawingBoundary || boundaryPoints.length === 0) return;
+            boundaryPoints.pop();
+            redrawBoundary();
+            L.DomEvent.preventDefault(e);
+        });
+
+        function redrawBoundary() {
+            boundaryLayer.clearLayers();
+            if(boundaryPoints.length > 0) {
+                L.polygon(boundaryPoints, {color: 'red', weight: 3}).addTo(boundaryLayer);
+                boundaryPoints.forEach(p => {
+                    L.circleMarker(p, {radius: 4, color: 'red', fillColor: 'white', fillOpacity: 1}).addTo(boundaryLayer);
+                });
+            }
+        }
+
+        // --- 6. GPS LOCATION ---
+
+        function locateUser() {
+            map.locate({setView: true, maxZoom: 19});
+        }
+
+        map.on('locationfound', function(e) {
+            gridState.center = e.latlng;
+            updateGrid();
+            document.getElementById('status').innerText = "Located GPS position.";
+        });
+
+        map.on('locationerror', function(e) {
+            alert("Location access denied or unavailable.");
+        });
+
+
+        // --- 7. DXF EXPORT ENGINE ---
+
+        function exportDXF() {
+            // 1. Convert Grid Center to OSGB
+            const centerOS = latLngToOSGB(gridState.center);
+            
+            // Should we offset coordinates?
+            const isRelative = document.getElementById('relativeCoords').checked;
+            const originX = isRelative ? centerOS[0] : 0;
+            const originY = isRelative ? centerOS[1] : 0;
+
+            let dxf = [];
+            
+            // HEADER
+            dxf.push("0", "SECTION", "2", "HEADER", "9", "$ACADVER", "1", "AC1009", "0", "ENDSEC");
+            
+            // TABLES (Layers)
+            dxf.push("0", "SECTION", "2", "TABLES");
+            dxf.push("0", "TABLE", "2", "LAYER", "70", "2");
+            // Grid Layer (Blue = 5)
+            dxf.push("0", "LAYER", "2", "GRID", "70", "0", "62", "5", "6", "CONTINUOUS");
+            // Boundary Layer (Red = 1)
+            dxf.push("0", "LAYER", "2", "BOUNDARY", "70", "0", "62", "1", "6", "CONTINUOUS");
+            dxf.push("0", "ENDTAB", "0", "ENDSEC");
+
+            // ENTITIES
+            dxf.push("0", "SECTION", "2", "ENTITIES");
+
+            // -- GENERATE GRID LINES (Mathematically) --
+            // We calculate start/end points in local meter space, rotate them, add center OSGB, then write.
+            const w = gridState.width;
+            const h = gridState.height;
+            const rot = gridState.rotation; // radians
+            const sp = gridState.spacing;
+
+            const cos = Math.cos(rot);
+            const sin = Math.sin(rot);
+
+            // Function to transform local meter offset (x,y) to Final DXF coord
+            const transform = (x, y) => {
+                // Rotate
+                const rx = x * cos - y * sin;
+                const ry = x * sin + y * cos;
+                // Translate to OSGB Global
+                const gx = centerOS[0] + rx;
+                const gy = centerOS[1] + ry;
+                // Relative Offset
+                return [gx - originX, gy - originY];
+            };
+
+            const addLine = (x1, y1, x2, y2) => {
+                const start = transform(x1, y1);
+                const end = transform(x2, y2);
+                dxf.push("0", "LINE", "8", "GRID");
+                dxf.push("10", start[0].toFixed(3), "20", start[1].toFixed(3));
+                dxf.push("11", end[0].toFixed(3), "21", end[1].toFixed(3));
+            };
+
+            const stepsX = Math.floor(w / sp);
+            const stepsY = Math.floor(h / sp);
+
+            // Vertical lines loop
+            for(let i=0; i<=stepsX; i++) {
+                // Center alignment logic: start from left -w/2
+                const x = -(w/2) + (i * sp);
+                if (x > w/2) break; // Safety
+                addLine(x, -h/2, x, h/2);
+            }
+            // Horizontal lines loop
+            for(let i=0; i<=stepsY; i++) {
+                const y = -(h/2) + (i * sp);
+                if (y > h/2) break;
+                addLine(-w/2, y, w/2, y);
+            }
+
+            // -- GENERATE BOUNDARY (LWPOLYLINE) --
+            if(boundaryPoints.length > 1) {
+                dxf.push("0", "LWPOLYLINE", "8", "BOUNDARY");
+                dxf.push("90", boundaryPoints.length); // Vertex count
+                dxf.push("70", "1"); // Closed flag (1 = Closed)
+
+                boundaryPoints.forEach(pt => {
+                    const os = latLngToOSGB(pt);
+                    dxf.push("10", (os[0] - originX).toFixed(3));
+                    dxf.push("20", (os[1] - originY).toFixed(3));
+                });
+            }
+
+            dxf.push("0", "ENDSEC", "0", "EOF");
+
+            // DOWNLOAD
+            const blob = new Blob([dxf.join("\n")], {type: 'application/dxf'});
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `survey_${Date.now()}.dxf`;
+            link.click();
+        }
+
+        // Wrapper for Proj4js
+        function latLngToOSGB(latlng) {
+            return proj4(WGS84, OSGB36, [latlng.lng, latlng.lat]);
+        }
+
+        // Init Grid
+        updateGrid();
+
+    </script>
 </body>
 </html>

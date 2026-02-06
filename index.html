@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>OSGB36(15) 3-Point Rectangle Grid + Boundary → DXF</title>
+  <title>OSGB36(15) Grid in Rectangle/Polygon → DXF</title>
 
   <!-- Leaflet -->
   <link rel="stylesheet"
@@ -139,6 +139,18 @@
     .toggle span { font-size: 13px; color: #111827; font-weight: 700; }
     .toggle input { transform: scale(1.3); }
 
+    .seg {
+      display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;
+      background:#f3f4f6; border-radius:14px; padding:10px;
+    }
+    .seg label{
+      display:flex; align-items:center; gap:6px;
+      font-size:13px; font-weight:800; color:#111827;
+      padding:6px 10px; border-radius:999px; background:#fff;
+      border:1px solid #d1d5db;
+    }
+    .seg input{ transform: scale(1.2); }
+
     .status {
       margin-top: 10px;
       font-size: 12px;
@@ -197,34 +209,46 @@
     <div class="handle" id="handle" aria-label="Drag to resize"></div>
 
     <div class="toprow">
-      <div class="title">OSGB36(15) 3-Point Grid + Boundary → DXF</div>
+      <div class="title">OSGB36(15) Grid → DXF</div>
       <div class="badge" id="modeBadge">idle</div>
     </div>
 
     <div class="row">
-      <button class="btn" id="rect3Btn">Define rectangle (3 pts)</button>
-      <button class="btn secondary" id="gpsBtn">Use GPS</button>
+      <button class="btn" id="rect3Btn">Rectangle (3 pts)</button>
+      <button class="btn secondary" id="polyBtn">Polygon (tap points)</button>
     </div>
 
     <div class="row">
-      <button class="btn secondary" id="drawBoundaryBtn">Draw boundary</button>
-      <button class="btn secondary" id="finishBoundaryBtn" disabled>Finish boundary</button>
-      <button class="btn danger" id="clearBoundaryBtn" disabled>Clear boundary</button>
+      <button class="btn secondary" id="finishShapeBtn" disabled>Finish shape</button>
+      <button class="btn danger" id="clearShapeBtn" disabled>Clear shape</button>
+      <button class="btn secondary" id="pickAngleBtn">Pick grid angle (2 pts)</button>
     </div>
 
     <div class="row">
+      <button class="btn secondary" id="gpsBtn">GPS</button>
       <button class="btn secondary" id="resetBtn">Reset</button>
       <button class="btn" id="exportBtn" disabled>Export DXF</button>
     </div>
 
     <div class="toggle">
-      <span>Use crosshair (pick from screen centre)</span>
+      <span>Use crosshair</span>
       <input id="useCrosshair" type="checkbox" />
     </div>
 
     <div class="toggle">
-      <span>Export relative to P1 (origin)</span>
+      <span>Export relative to origin</span>
       <input id="relativeExport" type="checkbox" />
+    </div>
+
+    <div class="toggle">
+      <span>Snap spacing to 10.000m</span>
+      <input id="snap10" type="checkbox" checked />
+    </div>
+
+    <div class="seg" aria-label="Grid orientation">
+      <label><input type="radio" name="gridOri" value="shape" checked> Shape baseline</label>
+      <label><input type="radio" name="gridOri" value="north"> True North</label>
+      <label><input type="radio" name="gridOri" value="picked"> Picked angle</label>
     </div>
 
     <div class="grid2">
@@ -233,22 +257,31 @@
         <input id="gridSpacing" type="number" min="0.1" step="0.1" value="10" />
       </div>
       <div class="field">
-        <label for="layerName">Grid layer (DXF)</label>
-        <input id="layerName" type="text" value="GRID" />
+        <label for="gridLayer">Grid layer (DXF)</label>
+        <input id="gridLayer" type="text" value="GRID" />
       </div>
       <div class="field">
-        <label for="boundaryLayerName">Boundary layer (DXF)</label>
-        <input id="boundaryLayerName" type="text" value="BOUNDARY" />
+        <label for="shapeLayer">Shape layer (DXF)</label>
+        <input id="shapeLayer" type="text" value="BOUNDARY" />
       </div>
       <div class="field">
-        <label>Rectangle</label>
-        <div style="font-size:14px;font-weight:900;" id="rectInfo">Not set</div>
+        <label for="simplifyTol">Boundary simplify (m)</label>
+        <input id="simplifyTol" type="number" min="0" step="0.1" value="0.2" />
+      </div>
+      <div class="field">
+        <label>Shape</label>
+        <div style="font-size:14px;font-weight:900;" id="shapeInfo">None</div>
+      </div>
+      <div class="field">
+        <label>Grid angle (deg)</label>
+        <div style="font-size:14px;font-weight:900;" id="gridAngDeg">0.000</div>
       </div>
     </div>
 
     <div class="status" id="statusBox">Starting…</div>
     <div class="mini">
-      Rectangle: tap P1, tap P2 (length + rotation), tap P3 (width). Grid fills that rectangle.
+      Rectangle: pick P1, P2 (baseline), P3 (width). Polygon: tap points then Finish shape.
+      Grid is clipped inside the shape. Export: Grid BLUE, Shape RED.
     </div>
   </div>
 
@@ -257,7 +290,6 @@
   // Map setup (Satellite)
   // ---------------------------
   const map = L.map('map', { zoomControl: true }).setView([52.2, 0.9], 13);
-
   L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     { maxZoom: 20, attribution: 'Tiles © Esri' }
@@ -276,6 +308,30 @@
   window.addEventListener('error', (ev) => {
     statusBox.textContent = 'JS error: ' + (ev.message || ev.error || 'unknown');
   });
+
+  const useCrosshairEl = document.getElementById('useCrosshair');
+  const crosshairEl = document.getElementById('crosshair');
+  const relativeExportEl = document.getElementById('relativeExport');
+  const snap10El = document.getElementById('snap10');
+
+  const gridSpacingEl = document.getElementById('gridSpacing');
+  const gridLayerEl = document.getElementById('gridLayer');
+  const shapeLayerEl = document.getElementById('shapeLayer');
+  const simplifyTolEl = document.getElementById('simplifyTol');
+
+  const shapeInfoEl = document.getElementById('shapeInfo');
+  const gridAngDegEl = document.getElementById('gridAngDeg');
+
+  const rect3Btn = document.getElementById('rect3Btn');
+  const polyBtn = document.getElementById('polyBtn');
+  const finishShapeBtn = document.getElementById('finishShapeBtn');
+  const clearShapeBtn = document.getElementById('clearShapeBtn');
+  const pickAngleBtn = document.getElementById('pickAngleBtn');
+
+  // radio
+  function getGridOriMode(){
+    return document.querySelector('input[name="gridOri"]:checked')?.value || 'shape';
+  }
 
   // ---------------------------
   // OSGB36(15) / OSTN15
@@ -297,6 +353,7 @@
       ostnReady = true;
       statusBox.textContent = 'OSTN15 loaded ✅ (OSGB36(15) accurate)';
       exportBtn.disabled = false;
+      redrawAll();
     } catch (e) {
       console.error(e);
       statusBox.textContent = 'OSTN15 failed ⚠️ Using fallback (not survey-grade). Host via HTTPS.';
@@ -309,20 +366,13 @@
       );
       ostnReady = false;
       exportBtn.disabled = false;
+      redrawAll();
     }
   }
 
   // ---------------------------
   // Helpers
   // ---------------------------
-  const useCrosshairEl = document.getElementById('useCrosshair');
-  const crosshairEl = document.getElementById('crosshair');
-  const gridSpacingEl = document.getElementById('gridSpacing');
-  const layerNameEl = document.getElementById('layerName');
-  const boundaryLayerNameEl = document.getElementById('boundaryLayerName');
-  const relativeExportEl = document.getElementById('relativeExport');
-  const rectInfoEl = document.getElementById('rectInfo');
-
   function crosshairLatLng() { return map.getCenter(); }
   function getPickLatLng(tapLatLng) { return useCrosshairEl.checked ? crosshairLatLng() : tapLatLng; }
 
@@ -336,51 +386,92 @@
   }
 
   function hypot2(de, dn) { return Math.sqrt(de*de + dn*dn); }
+  function dot(a,b){ return a.e*b.e + a.n*b.n; }
+  function sub(a,b){ return {e:a.e-b.e, n:a.n-b.n}; }
+  function add(a,b){ return {e:a.e+b.e, n:a.n+b.n}; }
+  function mul(a,s){ return {e:a.e*s, n:a.n*s}; }
+  function unit(v){
+    const L = hypot2(v.e, v.n);
+    if (L < 1e-12) return null;
+    return {e: v.e/L, n: v.n/L};
+  }
+  function perpLeft(u){ return {e:-u.n, n:u.e}; }
+
+  function radToDeg(r){ return r*180/Math.PI; }
+  function degToRad(d){ return d*Math.PI/180; }
+
+  function trueNorthRotationRadAtLatLng(latlng){
+    // direction of increasing latitude in EN, convert to "grid rotation" where +Y is north
+    const dLat = 0.00015; // ~17m
+    const p0 = latLngToEN(latlng);
+    const pN = latLngToEN(L.latLng(latlng.lat + dLat, latlng.lng));
+    const dE = pN.e - p0.e;
+    const dN = pN.n - p0.n;
+    const thetaFromEast = Math.atan2(dN, dE);
+    return thetaFromEast - (Math.PI/2);
+  }
 
   // ---------------------------
   // Layers
   // ---------------------------
+  const shapeLayer = L.layerGroup().addTo(map);
   const gridLayer = L.layerGroup().addTo(map);
-  const rectLayer = L.layerGroup().addTo(map);
   const pickLayer = L.layerGroup().addTo(map);
 
-  // Boundary
-  const boundaryPointsLayer = L.layerGroup().addTo(map);
-  let boundaryLatLngs = [];
-  let boundaryPreviewLine = null;
-
   // ---------------------------
-  // Modes / rectangle state
+  // App state
   // ---------------------------
-  let mode = 'idle'; // idle | rect3 | boundary
-
-  // 3-point rectangle in EN
-  let rectP1 = null; // {e,n}
-  let rectP2 = null;
-  let rectP3 = null;
-
-  // derived
-  let rectLen = 0;
-  let rectWid = 0;
-  let rectU = null; // unit along length {e,n}
-  let rectW = null; // unit perp (to the chosen side) {e,n}
-  let rectCornersEN = null; // array of 4 EN corners in order
-
-  function setMode(m) {
+  let mode = 'idle'; // idle | rect3 | poly | pickAngle
+  function setMode(m){
     mode = m;
-    modeBadge.textContent = m === 'rect3' ? 'pick P1' :
-                            m === 'boundary' ? 'boundary draw' : 'idle';
+    modeBadge.textContent =
+      m === 'rect3' ? 'rect: pick P1' :
+      m === 'poly' ? 'poly: tap points' :
+      m === 'pickAngle' ? 'pick angle' :
+      'idle';
   }
 
-  function clearRectangle() {
-    rectP1 = rectP2 = rectP3 = null;
-    rectLen = rectWid = 0;
-    rectU = rectW = null;
-    rectCornersEN = null;
-    rectInfoEl.textContent = 'Not set';
-    rectLayer.clearLayers();
+  // Shape definitions in EN
+  // shapeType: 'rect' | 'poly' | null
+  let shapeType = null;
+  let polyEN = []; // for polygon
+  // For rect3:
+  let rP1=null, rP2=null, rP3=null;
+  let rectU=null, rectW=null, rectLen=0, rectWid=0;
+  let rectCornersEN=null; // [c1,c2,c3,c4] in order
+
+  // Grid orientation
+  // stored as angle (radians) of grid axes relative to EN:
+  // angle = 0 means grid local +Y aligned with EN +Y (north in grid), used via basis vectors
+  let pickedAngleRad = 0; // set by "Pick grid angle" mode
+  let gridAngleRad = 0;
+
+  // Origin for "relative export"
+  let exportOriginEN = null;
+
+  function updateGridAngleDisplay(){
+    gridAngDegEl.textContent = radToDeg(gridAngleRad).toFixed(3);
+  }
+
+  function clearAll(){
+    shapeType = null;
+    polyEN = [];
+    rP1=rP2=rP3=null;
+    rectU=rectW=null;
+    rectLen=rectWid=0;
+    rectCornersEN=null;
+    exportOriginEN = null;
+
+    shapeLayer.clearLayers();
     gridLayer.clearLayers();
     pickLayer.clearLayers();
+
+    finishShapeBtn.disabled = true;
+    clearShapeBtn.disabled = true;
+
+    shapeInfoEl.textContent = 'None';
+    statusBox.textContent = 'Reset.';
+    setMode('idle');
   }
 
   function drawPickPoint(latlng, label) {
@@ -388,108 +479,489 @@
     m.bindTooltip(label, { permanent: true, direction: 'top', offset: [0,-8] });
   }
 
-  function computeRectangleFrom3Pts(p1, p2, p3) {
-    // p1,p2,p3 are EN objects
-    const vE = p2.e - p1.e;
-    const vN = p2.n - p1.n;
-    const L = hypot2(vE, vN);
+  function computeRectFrom3Pts(p1,p2,p3){
+    const v = sub(p2,p1);
+    const L = hypot2(v.e,v.n);
     if (L < 0.001) return null;
-
-    const u = { e: vE / L, n: vN / L };            // along baseline
-    const w0 = { e: -u.n, n: u.e };                // left perp
-    const dE3 = p3.e - p1.e;
-    const dN3 = p3.n - p1.n;
-    const widthSigned = dE3 * w0.e + dN3 * w0.n;   // projection onto perp
+    const u = unit(v);
+    const w0 = perpLeft(u);
+    const widthSigned = dot(sub(p3,p1), w0);
     const W = Math.abs(widthSigned);
     if (W < 0.001) return null;
+    const w = widthSigned >= 0 ? w0 : mul(w0,-1);
 
-    // choose side so width is positive in rect local coords
-    const w = widthSigned >= 0 ? w0 : { e: -w0.e, n: -w0.n };
-
-    // corners: p1, p2, p2 + w*W, p1 + w*W
-    const c1 = { e: p1.e, n: p1.n };
-    const c2 = { e: p2.e, n: p2.n };
-    const c3 = { e: p2.e + w.e * W, n: p2.n + w.n * W };
-    const c4 = { e: p1.e + w.e * W, n: p1.n + w.n * W };
-
-    return { L, W, u, w, corners: [c1, c2, c3, c4] };
+    const c1 = p1;
+    const c2 = p2;
+    const c3 = add(p2, mul(w, W));
+    const c4 = add(p1, mul(w, W));
+    return {u,w,L,W,corners:[c1,c2,c3,c4]};
   }
 
-  function redrawRectangleAndGrid() {
-    rectLayer.clearLayers();
-    gridLayer.clearLayers();
-
-    if (!rectCornersEN) return;
-
-    // Draw rectangle outline
-    const ring = [...rectCornersEN, rectCornersEN[0]].map(p => enToLatLng(p.e, p.n));
-    L.polyline(ring, { weight: 3, opacity: 0.9 }).addTo(rectLayer);
-
-    // Build grid lines inside rectangle in local coords:
-    // local origin at P1, x in [0..L] along u, y in [0..W] along w
-    const spacing = parseFloat(gridSpacingEl.value);
-    if (!(spacing > 0)) return;
-
-    // Snap line positions so border is included
-    const nx = Math.max(1, Math.round(rectLen / spacing));
-    const ny = Math.max(1, Math.round(rectWid / spacing));
-    const sx = rectLen / nx;
-    const sy = rectWid / ny;
-
-    const p1 = rectP1; // EN
-    const u = rectU;
-    const w = rectW;
-
-    function localToEN(x, y) {
-      return { e: p1.e + u.e * x + w.e * y, n: p1.n + u.n * x + w.n * y };
+  function drawShapePreview(){
+    shapeLayer.clearLayers();
+    if (shapeType === 'rect' && rectCornersEN){
+      const ring = [...rectCornersEN, rectCornersEN[0]].map(p => enToLatLng(p.e,p.n));
+      L.polyline(ring, {weight:3, opacity:0.9}).addTo(shapeLayer);
+    } else if (shapeType === 'poly' && polyEN.length>=1){
+      const ring = polyEN.map(p => enToLatLng(p.e,p.n));
+      L.polyline(ring, {weight:3, opacity:0.9}).addTo(shapeLayer);
+      // if finished polygon, we draw closed ring elsewhere
     }
+  }
 
-    // Vertical-ish lines (parallel to width)
-    for (let i = 0; i <= nx; i++) {
-      const x = i * sx;
-      const a = localToEN(x, 0);
-      const b = localToEN(x, rectWid);
-      L.polyline([enToLatLng(a.e,a.n), enToLatLng(b.e,b.n)], { weight: 2, opacity: 0.85 }).addTo(gridLayer);
-    }
-
-    // Horizontal-ish lines (parallel to length)
-    for (let j = 0; j <= ny; j++) {
-      const y = j * sy;
-      const a = localToEN(0, y);
-      const b = localToEN(rectLen, y);
-      L.polyline([enToLatLng(a.e,a.n), enToLatLng(b.e,b.n)], { weight: 2, opacity: 0.85 }).addTo(gridLayer);
+  function drawShapeClosed(){
+    shapeLayer.clearLayers();
+    if (shapeType === 'rect' && rectCornersEN){
+      const ring = [...rectCornersEN, rectCornersEN[0]].map(p => enToLatLng(p.e,p.n));
+      L.polyline(ring, {weight:3, opacity:0.9}).addTo(shapeLayer);
+    } else if (shapeType === 'poly' && polyEN.length>=3){
+      const ring = [...polyEN, polyEN[0]].map(p => enToLatLng(p.e,p.n));
+      L.polyline(ring, {weight:3, opacity:0.9}).addTo(shapeLayer);
     }
   }
 
   // ---------------------------
-  // Boundary drawing
+  // Grid orientation basis
+  // We use two unit vectors:
+  // gx = direction of grid "x" axis (east-ish)
+  // gy = direction of grid "y" axis (north-ish)
+  // angleRad is rotation such that gy is rotated by angleRad from "true north".
+  // For our math, define gy as:
+  //   gy = rotate( (0,1) ) by angleRad => [sin, cos]
+  // and gx as perpendicular right => [cos, -sin]
   // ---------------------------
-  const drawBoundaryBtn = document.getElementById('drawBoundaryBtn');
-  const finishBoundaryBtn = document.getElementById('finishBoundaryBtn');
-  const clearBoundaryBtn = document.getElementById('clearBoundaryBtn');
+  function gridBasisFromAngle(angleRad){
+    const s = Math.sin(angleRad);
+    const c = Math.cos(angleRad);
+    const gy = {e: s, n: c};
+    const gx = {e: c, n: -s};
+    return {gx,gy};
+  }
 
-  function redrawBoundaryPreview() {
-    if (boundaryPreviewLine) boundaryPreviewLine.remove();
-    boundaryPointsLayer.clearLayers();
+  // Determine gridAngleRad depending on user selection and shape
+  function resolveGridAngle(){
+    const mode = getGridOriMode();
 
-    if (boundaryLatLngs.length === 0) {
-      boundaryPreviewLine = null;
-      finishBoundaryBtn.disabled = true;
-      clearBoundaryBtn.disabled = true;
+    // Choose a reference point for true north computation
+    // - rectangle: use P1 or centroid; polygon: centroid-ish
+    const refLatLng = (() => {
+      if (shapeType === 'rect' && rP1){
+        const ll = enToLatLng(rP1.e, rP1.n);
+        return ll;
+      }
+      if (shapeType === 'poly' && polyEN.length){
+        let se=0,sn=0;
+        for (const p of polyEN){ se+=p.e; sn+=p.n; }
+        const ll = enToLatLng(se/polyEN.length, sn/polyEN.length);
+        return ll;
+      }
+      return L.latLng(52.2,0.9);
+    })();
+
+    if (mode === 'north'){
+      gridAngleRad = trueNorthRotationRadAtLatLng(refLatLng);
+      updateGridAngleDisplay();
+      return;
+    }
+    if (mode === 'picked'){
+      gridAngleRad = pickedAngleRad;
+      updateGridAngleDisplay();
       return;
     }
 
-    boundaryPreviewLine = L.polyline(boundaryLatLngs, { weight: 3, opacity: 0.9 }).addTo(map);
-    boundaryLatLngs.forEach(ll => {
-      L.circleMarker(ll, { radius: 5, weight: 2, opacity: 0.9, fillOpacity: 0.2 }).addTo(boundaryPointsLayer);
-    });
+    // shape baseline
+    if (shapeType === 'rect' && rP1 && rP2){
+      // gridAngleRad should align grid Y to baseline "north-ish" of rectangle.
+      // We want grid to align with rectangle axes:
+      // baseline vector is rect "x"; so grid gx should align with rectU.
+      // rectU angle from east is atan2(n,e). Our grid gx = [cos,-sin]
+      // easiest: convert rectU to angleRad that produces gx=rectU.
+      // If gx = (cos, -sin) = rectU, then cos = rectU.e, -sin = rectU.n => sin = -rectU.n
+      gridAngleRad = Math.atan2(-rectU.n, rectU.e);
+      updateGridAngleDisplay();
+      return;
+    }
 
-    finishBoundaryBtn.disabled = boundaryLatLngs.length < 2;
-    clearBoundaryBtn.disabled = false;
+    // polygon baseline without picked angle isn't meaningful: default to true north
+    gridAngleRad = trueNorthRotationRadAtLatLng(refLatLng);
+    updateGridAngleDisplay();
   }
 
   // ---------------------------
-  // DXF export
+  // Grid clipping to polygon
+  // ---------------------------
+  function segmentIntersection(p, r, q, s){
+    // p + t r intersects q + u s
+    // returns {t,u,pt} or null if parallel/no intersection
+    const rxs = r.e*s.n - r.n*s.e;
+    const qmp = sub(q,p);
+    const qmpxr = qmp.e*r.n - qmp.n*r.e;
+    if (Math.abs(rxs) < 1e-12) return null; // parallel
+    const t = (qmp.e*s.n - qmp.n*s.e) / rxs;
+    const u = qmpxr / rxs;
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1){
+      return {t,u, pt: add(p, mul(r, t))};
+    }
+    return null;
+  }
+
+  function pointInPolygon(pt, poly){
+    // ray casting
+    let inside = false;
+    for (let i=0, j=poly.length-1; i<poly.length; j=i++){
+      const xi=poly[i].e, yi=poly[i].n;
+      const xj=poly[j].e, yj=poly[j].n;
+      const intersect = ((yi>pt.n) !== (yj>pt.n)) &&
+        (pt.e < (xj-xi) * (pt.n-yi) / ((yj-yi)||1e-12) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  function clipLineToPolygon(lineA, lineB, poly){
+    // returns array of segments inside polygon: [{a,b},...]
+    const d = sub(lineB, lineA);
+    const hits = [];
+
+    // Intersections with polygon edges
+    for (let i=0; i<poly.length; i++){
+      const p1 = poly[i];
+      const p2 = poly[(i+1)%poly.length];
+      const e = sub(p2,p1);
+      const hit = segmentIntersection(lineA, d, p1, e);
+      if (hit) hits.push({t: hit.t, pt: hit.pt});
+    }
+
+    // Add endpoints with their t (0 and 1)
+    hits.push({t:0, pt: lineA});
+    hits.push({t:1, pt: lineB});
+
+    // Sort by t and de-dup
+    hits.sort((a,b)=>a.t-b.t);
+    const uniq = [];
+    for (const h of hits){
+      const last = uniq[uniq.length-1];
+      if (!last || Math.abs(h.t-last.t) > 1e-7) uniq.push(h);
+    }
+
+    // Pair consecutive intervals and test midpoint
+    const segs = [];
+    for (let i=0; i<uniq.length-1; i++){
+      const t0 = uniq[i].t, t1 = uniq[i+1].t;
+      if (t1 - t0 < 1e-8) continue;
+      const mid = add(lineA, mul(d, (t0+t1)/2));
+      if (pointInPolygon(mid, poly)){
+        segs.push({a: uniq[i].pt, b: uniq[i+1].pt});
+      }
+    }
+    return segs;
+  }
+
+  // ---------------------------
+  // Grid generation (exact spacing, not stretched)
+  // - We create infinite-ish lines across a bounding box, then clip to shape.
+  // - Border lines are effectively produced by clipping too, BUT for rectangles we also draw border explicitly.
+  // ---------------------------
+  function shapeBoundsEN(){
+    let pts = [];
+    if (shapeType === 'rect' && rectCornersEN) pts = rectCornersEN;
+    if (shapeType === 'poly' && polyEN.length>=3) pts = polyEN;
+    if (!pts.length) return null;
+    let minE=Infinity, minN=Infinity, maxE=-Infinity, maxN=-Infinity;
+    for (const p of pts){
+      minE=Math.min(minE,p.e); minN=Math.min(minN,p.n);
+      maxE=Math.max(maxE,p.e); maxN=Math.max(maxN,p.n);
+    }
+    return {minE,minN,maxE,maxN};
+  }
+
+  function redrawAll(){
+    gridLayer.clearLayers();
+
+    if (!(shapeType && ((shapeType==='rect' && rectCornersEN) || (shapeType==='poly' && polyEN.length>=3)))){
+      drawShapePreview();
+      return;
+    }
+
+    resolveGridAngle();
+    drawShapeClosed();
+
+    const spacing = (snap10El.checked ? 10.0 : parseFloat(gridSpacingEl.value));
+    if (!(spacing > 0)) return;
+
+    // if snap10 checked, force input to 10 and disable it
+    if (snap10El.checked){
+      if (gridSpacingEl.value !== '10') gridSpacingEl.value = '10';
+      gridSpacingEl.disabled = true;
+    } else {
+      gridSpacingEl.disabled = false;
+    }
+
+    // Use clipping polygon
+    const clipPoly = (shapeType === 'rect') ? rectCornersEN : polyEN;
+
+    const b = shapeBoundsEN();
+    if (!b) return;
+
+    // pick an origin for grid coordinates: use export origin (shape origin) or bounds min projected
+    // We'll set export origin depending on shape:
+    if (shapeType === 'rect' && rP1) exportOriginEN = rP1;
+    else if (shapeType === 'poly' && polyEN.length) exportOriginEN = polyEN[0];
+
+    // Expand bounds so lines fully cover shape even after rotation
+    const pad = Math.max(50, spacing*2);
+    const minE = b.minE - pad, maxE = b.maxE + pad;
+    const minN = b.minN - pad, maxN = b.maxN + pad;
+
+    const {gx,gy} = gridBasisFromAngle(gridAngleRad);
+
+    // Convert a point to grid coords (x,y) where:
+    // x = dot(p, gx), y = dot(p, gy)
+    // We'll generate lines at y = k*spacing (horizontal in grid space) and x = k*spacing (vertical)
+    function toGrid(p){ return {x: dot(p,gx), y: dot(p,gy)}; }
+    function fromGrid(x,y){ return add(mul(gx,x), mul(gy,y)); }
+
+    // Determine range of x/y over the bounding box corners
+    const corners = [
+      {e:minE,n:minN},{e:maxE,n:minN},{e:maxE,n:maxN},{e:minE,n:maxN}
+    ];
+    let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+    for (const c of corners){
+      const g = toGrid(c);
+      minX=Math.min(minX,g.x); maxX=Math.max(maxX,g.x);
+      minY=Math.min(minY,g.y); maxY=Math.max(maxY,g.y);
+    }
+
+    // Snap start to spacing gridlines (exact spacing)
+    const startX = Math.floor(minX/spacing)*spacing;
+    const endX   = Math.ceil(maxX/spacing)*spacing;
+    const startY = Math.floor(minY/spacing)*spacing;
+    const endY   = Math.ceil(maxY/spacing)*spacing;
+
+    // Line length to ensure they cross the whole bounding box
+    const big = hypot2(maxE-minE, maxN-minN) * 2;
+
+    // Helper to draw clipped segments
+    function drawSeg(a,b){
+      if (![a.e,a.n,b.e,b.n].every(Number.isFinite)) return;
+      L.polyline([enToLatLng(a.e,a.n), enToLatLng(b.e,b.n)], {weight:2, opacity:0.85}).addTo(gridLayer);
+    }
+
+    // vertical grid lines: x=const, vary y
+    for (let x = startX; x <= endX + 1e-9; x += spacing){
+      const a = fromGrid(x, startY - big);
+      const b2 = fromGrid(x, endY + big);
+
+      const segs = clipLineToPolygon(a, b2, clipPoly);
+      for (const s of segs) drawSeg(s.a, s.b);
+    }
+
+    // horizontal grid lines: y=const
+    for (let y = startY; y <= endY + 1e-9; y += spacing){
+      const a = fromGrid(startX - big, y);
+      const b2 = fromGrid(endX + big, y);
+
+      const segs = clipLineToPolygon(a, b2, clipPoly);
+      for (const s of segs) drawSeg(s.a, s.b);
+    }
+  }
+
+  // ---------------------------
+  // Shape creation UI
+  // ---------------------------
+  function setShapeInfo(text){
+    shapeInfoEl.textContent = text;
+  }
+
+  rect3Btn.addEventListener('click', () => {
+    setMode('rect3');
+    shapeType = 'rect';
+    polyEN = [];
+    rP1=rP2=rP3=null;
+    rectU=rectW=null; rectLen=rectWid=0; rectCornersEN=null;
+    pickLayer.clearLayers();
+    gridLayer.clearLayers();
+    shapeLayer.clearLayers();
+    finishShapeBtn.disabled = true;
+    clearShapeBtn.disabled = false;
+
+    setShapeInfo('Rectangle: picking P1');
+    statusBox.textContent = 'Rectangle mode: pick P1, then P2, then P3.';
+  });
+
+  polyBtn.addEventListener('click', () => {
+    setMode('poly');
+    shapeType = 'poly';
+    polyEN = [];
+    rP1=rP2=rP3=null;
+    rectU=rectW=null; rectLen=rectWid=0; rectCornersEN=null;
+
+    pickLayer.clearLayers();
+    gridLayer.clearLayers();
+    shapeLayer.clearLayers();
+
+    finishShapeBtn.disabled = true;
+    clearShapeBtn.disabled = false;
+
+    setShapeInfo('Polygon: tap points…');
+    statusBox.textContent = 'Polygon mode: tap points around boundary, then Finish shape.';
+  });
+
+  finishShapeBtn.addEventListener('click', () => {
+    if (shapeType === 'poly'){
+      if (polyEN.length < 3){ alert('Polygon needs at least 3 points'); return; }
+      setMode('idle');
+      statusBox.textContent = 'Polygon finished. Grid clipped inside.';
+      setShapeInfo(`Polygon (${polyEN.length} pts)`);
+      redrawAll();
+    } else {
+      setMode('idle');
+      redrawAll();
+    }
+  });
+
+  clearShapeBtn.addEventListener('click', () => {
+    if (shapeType === 'poly'){
+      polyEN = [];
+      shapeLayer.clearLayers();
+      pickLayer.clearLayers();
+      gridLayer.clearLayers();
+      finishShapeBtn.disabled = true;
+      setShapeInfo('Polygon cleared');
+      statusBox.textContent = 'Polygon cleared.';
+    } else if (shapeType === 'rect'){
+      rP1=rP2=rP3=null;
+      rectCornersEN=null;
+      rectU=rectW=null; rectLen=rectWid=0;
+      shapeLayer.clearLayers();
+      pickLayer.clearLayers();
+      gridLayer.clearLayers();
+      finishShapeBtn.disabled = true;
+      setShapeInfo('Rectangle cleared');
+      statusBox.textContent = 'Rectangle cleared.';
+      setMode('rect3');
+      modeBadge.textContent = 'rect: pick P1';
+    }
+  });
+
+  // ---------------------------
+  // Pick grid angle (2 pts)
+  // ---------------------------
+  let a1=null, a2=null;
+  pickAngleBtn.addEventListener('click', () => {
+    setMode('pickAngle');
+    a1=a2=null;
+    statusBox.textContent = 'Pick grid angle: click point 1 then point 2.';
+    modeBadge.textContent = 'angle: pt1';
+  });
+
+  // ---------------------------
+  // Map click handler
+  // ---------------------------
+  map.on('click', (e) => {
+    const ll = getPickLatLng(e.latlng);
+    const en = latLngToEN(ll);
+
+    if (mode === 'pickAngle'){
+      if (!a1){
+        a1 = en;
+        drawPickPoint(ll, 'A1');
+        modeBadge.textContent = 'angle: pt2';
+        return;
+      }
+      if (!a2){
+        a2 = en;
+        drawPickPoint(ll, 'A2');
+        // angle baseline from a1->a2, use as "shape baseline" style:
+        const v = sub(a2,a1);
+        const u = unit(v);
+        if (!u){ alert('Bad angle points'); return; }
+        pickedAngleRad = Math.atan2(-u.n, u.e); // same mapping used for rect baseline
+        setMode('idle');
+        statusBox.textContent = `Picked grid angle = ${radToDeg(pickedAngleRad).toFixed(3)}°`;
+        redrawAll();
+        return;
+      }
+      return;
+    }
+
+    if (mode === 'rect3' && shapeType === 'rect'){
+      if (!rP1){
+        rP1 = en;
+        pickLayer.clearLayers();
+        drawPickPoint(ll,'P1');
+        setShapeInfo('Rectangle: picked P1, pick P2');
+        modeBadge.textContent = 'rect: pick P2';
+        clearShapeBtn.disabled = false;
+        return;
+      }
+      if (!rP2){
+        rP2 = en;
+        drawPickPoint(ll,'P2');
+        setShapeInfo('Rectangle: picked P2, pick P3');
+        modeBadge.textContent = 'rect: pick P3';
+        return;
+      }
+      if (!rP3){
+        rP3 = en;
+        drawPickPoint(ll,'P3');
+        const res = computeRectFrom3Pts(rP1,rP2,rP3);
+        if (!res){
+          alert('Bad rectangle (points too close / width ~0). Try again.');
+          rP1=rP2=rP3=null;
+          rectCornersEN=null;
+          pickLayer.clearLayers();
+          setShapeInfo('Rectangle: picking P1');
+          modeBadge.textContent = 'rect: pick P1';
+          return;
+        }
+        rectU=res.u; rectW=res.w; rectLen=res.L; rectWid=res.W; rectCornersEN=res.corners;
+        finishShapeBtn.disabled = true; // rectangle auto finishes
+        clearShapeBtn.disabled = false;
+        setMode('idle');
+        modeBadge.textContent = 'done';
+        setShapeInfo(`Rectangle ${rectLen.toFixed(2)}×${rectWid.toFixed(2)}m`);
+        statusBox.textContent = 'Rectangle set. Grid clipped inside.';
+
+        redrawAll();
+        return;
+      }
+      return;
+    }
+
+    if (mode === 'poly' && shapeType === 'poly'){
+      polyEN.push(en);
+      drawPickPoint(ll, `P${polyEN.length}`);
+      drawShapePreview();
+      finishShapeBtn.disabled = (polyEN.length < 3);
+      clearShapeBtn.disabled = false;
+      setShapeInfo(`Polygon: ${polyEN.length} pts`);
+      return;
+    }
+  });
+
+  // ---------------------------
+  // Geolocation
+  // ---------------------------
+  document.getElementById('gpsBtn').addEventListener('click', () => {
+    map.locate({ setView: true, maxZoom: 19, enableHighAccuracy: true, timeout: 15000 });
+  });
+  map.on('locationfound', (e) => {
+    if (window._gpsAccuracy) window._gpsAccuracy.remove();
+    window._gpsAccuracy = L.circle(e.latlng, {
+      radius: e.accuracy,
+      weight: 1,
+      opacity: 0.6,
+      fillOpacity: 0.08
+    }).addTo(map);
+    statusBox.textContent = `GPS found (±${Math.round(e.accuracy)}m).`;
+  });
+  map.on('locationerror', (e) => {
+    alert("Couldn't get GPS location: " + (e.message || "permission denied / unavailable"));
+  });
+
+  // ---------------------------
+  // Export DXF (grid BLUE, shape RED) + boundary safety
   // ---------------------------
   const DXF_COLOR_RED = 1;
   const DXF_COLOR_BLUE = 5;
@@ -508,7 +980,7 @@
     ].join("\n") + "\n";
   }
 
-  function dxfLWPolyline(pointsXY, layer, aciColor, closed=false) {
+  function dxfLWPolyline(pointsXY, layer, aciColor, closed=true) {
     const flag = closed ? 1 : 0;
     let out = "";
     out += "0\nLWPOLYLINE\n";
@@ -516,6 +988,8 @@
     out += "62\n" + String(aciColor) + "\n";
     out += "90\n" + String(pointsXY.length) + "\n";
     out += "70\n" + String(flag) + "\n";
+    // add elevation explicitly
+    out += "38\n0.0\n";
     for (const p of pointsXY) {
       out += "10\n" + p.x.toFixed(3) + "\n";
       out += "20\n" + p.y.toFixed(3) + "\n";
@@ -523,62 +997,161 @@
     return out;
   }
 
-  function exportDXF() {
-    if (!rectP1 || !rectCornersEN) { alert("Define the 3-point rectangle first."); return; }
+  function removeNearDuplicates(pts, eps=0.001){
+    const out = [];
+    for (const p of pts){
+      const last = out[out.length-1];
+      if (!last || Math.abs(p.e-last.e) > eps || Math.abs(p.n-last.n) > eps){
+        out.push(p);
+      }
+    }
+    // also remove last==first duplicates later when closing
+    return out;
+  }
 
-    const spacing = parseFloat(gridSpacingEl.value);
-    if (!(spacing > 0)) { alert("Grid spacing must be > 0."); return; }
+  // RDP simplification for EN polyline
+  function rdpSimplify(points, tol){
+    if (tol <= 0 || points.length < 3) return points;
 
-    const gridLayerName = (layerNameEl.value || "GRID").trim();
-    const bndLayerName = (boundaryLayerNameEl.value || "BOUNDARY").trim();
+    function distPointToSegment(p, a, b){
+      const ab = sub(b,a);
+      const ap = sub(p,a);
+      const ab2 = dot(ab,ab);
+      let t = ab2 ? dot(ap,ab)/ab2 : 0;
+      t = Math.max(0, Math.min(1,t));
+      const proj = add(a, mul(ab,t));
+      return hypot2(p.e-proj.e, p.n-proj.n);
+    }
+
+    function rdp(pts){
+      let maxD = 0, idx = -1;
+      const a = pts[0], b = pts[pts.length-1];
+      for (let i=1; i<pts.length-1; i++){
+        const d = distPointToSegment(pts[i], a, b);
+        if (d > maxD){ maxD=d; idx=i; }
+      }
+      if (maxD > tol && idx !== -1){
+        const left = rdp(pts.slice(0, idx+1));
+        const right = rdp(pts.slice(idx));
+        return left.slice(0,-1).concat(right);
+      }
+      return [a,b];
+    }
+
+    return rdp(points);
+  }
+
+  function exportDXF(){
+    // need a finished shape
+    const hasRect = (shapeType==='rect' && rectCornersEN);
+    const hasPoly = (shapeType==='poly' && polyEN.length>=3);
+    if (!hasRect && !hasPoly){ alert('Create a rectangle or polygon first.'); return; }
+
+    resolveGridAngle();
+
+    const spacing = (snap10El.checked ? 10.0 : parseFloat(gridSpacingEl.value));
+    if (!(spacing > 0)){ alert('Grid spacing must be > 0'); return; }
+
+    const gridLayerName = (gridLayerEl.value || 'GRID').trim();
+    const shpLayerName = (shapeLayerEl.value || 'BOUNDARY').trim();
     const rel = !!relativeExportEl.checked;
 
-    const origin = rectP1; // EN
-    const u = rectU;
-    const w = rectW;
-    const L = rectLen;
-    const W = rectWid;
+    const clipPoly = hasRect ? rectCornersEN : polyEN;
+    // choose export origin
+    const origin = exportOriginEN || clipPoly[0];
 
-    const nx = Math.max(1, Math.round(L / spacing));
-    const ny = Math.max(1, Math.round(W / spacing));
-    const sx = L / nx;
-    const sy = W / ny;
-
-    function localToEN(x, y) {
-      return { e: origin.e + u.e * x + w.e * y, n: origin.n + u.n * x + w.n * y };
-    }
-    function toOut(en) {
-      return rel ? { x: en.e - origin.e, y: en.n - origin.n } : { x: en.e, y: en.n };
+    function outXY(p){
+      if (!Number.isFinite(p.e) || !Number.isFinite(p.n)) return null;
+      return rel ? {x: p.e-origin.e, y: p.n-origin.n} : {x: p.e, y: p.n};
     }
 
+    // Build grid segments again for export (same logic as redrawAll but output segments)
+    const b = shapeBoundsEN();
+    if (!b){ alert('Shape bounds error'); return; }
+
+    const pad = Math.max(50, spacing*2);
+    const minE = b.minE - pad, maxE = b.maxE + pad;
+    const minN = b.minN - pad, maxN = b.maxN + pad;
+
+    const {gx,gy} = gridBasisFromAngle(gridAngleRad);
+
+    function toGrid(p){ return {x: dot(p,gx), y: dot(p,gy)}; }
+    function fromGrid(x,y){ return add(mul(gx,x), mul(gy,y)); }
+
+    const corners = [
+      {e:minE,n:minN},{e:maxE,n:minN},{e:maxE,n:maxN},{e:minE,n:maxN}
+    ];
+    let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+    for (const c of corners){
+      const g = toGrid(c);
+      minX=Math.min(minX,g.x); maxX=Math.max(maxX,g.x);
+      minY=Math.min(minY,g.y); maxY=Math.max(maxY,g.y);
+    }
+
+    const startX = Math.floor(minX/spacing)*spacing;
+    const endX   = Math.ceil(maxX/spacing)*spacing;
+    const startY = Math.floor(minY/spacing)*spacing;
+    const endY   = Math.ceil(maxY/spacing)*spacing;
+
+    const big = hypot2(maxE-minE, maxN-minN) * 2;
+
+    // DXF header
     let dxf = "";
     dxf += "0\nSECTION\n2\nHEADER\n";
     dxf += "9\n$INSUNITS\n70\n6\n";
     dxf += "0\nENDSEC\n";
     dxf += "0\nSECTION\n2\nENTITIES\n";
 
-    // Grid BLUE (lines inside rectangle)
-    for (let i = 0; i <= nx; i++) {
-      const x = i * sx;
-      const a = toOut(localToEN(x, 0));
-      const b = toOut(localToEN(x, W));
-      dxf += dxfLineEntity(a.x, a.y, b.x, b.y, gridLayerName, DXF_COLOR_BLUE);
+    // grid BLUE
+    for (let x = startX; x <= endX + 1e-9; x += spacing){
+      const A = fromGrid(x, startY - big);
+      const B = fromGrid(x, endY + big);
+      const segs = clipLineToPolygon(A,B,clipPoly);
+      for (const s of segs){
+        const a = outXY(s.a), b2 = outXY(s.b);
+        if (!a || !b2) continue;
+        dxf += dxfLineEntity(a.x,a.y,b2.x,b2.y, gridLayerName, DXF_COLOR_BLUE);
+      }
     }
-    for (let j = 0; j <= ny; j++) {
-      const y = j * sy;
-      const a = toOut(localToEN(0, y));
-      const b = toOut(localToEN(L, y));
-      dxf += dxfLineEntity(a.x, a.y, b.x, b.y, gridLayerName, DXF_COLOR_BLUE);
+    for (let y = startY; y <= endY + 1e-9; y += spacing){
+      const A = fromGrid(startX - big, y);
+      const B = fromGrid(endX + big, y);
+      const segs = clipLineToPolygon(A,B,clipPoly);
+      for (const s of segs){
+        const a = outXY(s.a), b2 = outXY(s.b);
+        if (!a || !b2) continue;
+        dxf += dxfLineEntity(a.x,a.y,b2.x,b2.y, gridLayerName, DXF_COLOR_BLUE);
+      }
     }
 
-    // Boundary RED
-    if (boundaryLatLngs.length >= 2) {
-      const bxy = boundaryLatLngs.map(ll => {
-        const en = latLngToEN(ll);
-        const o = rel ? { x: en.e - origin.e, y: en.n - origin.n } : { x: en.e, y: en.n };
-        return o;
-      });
-      dxf += dxfLWPolyline(bxy, bndLayerName, DXF_COLOR_RED, false);
+    // shape RED (closed)
+    // safety: remove duplicates + simplify
+    let shp = clipPoly.slice();
+    shp = removeNearDuplicates(shp, 0.001);
+
+    // ensure closed by repeating first at end for simplify stability, then strip
+    if (shp.length >= 3){
+      const closed = shp.concat([shp[0]]);
+      const tol = Math.max(0, parseFloat(simplifyTolEl.value) || 0);
+      const simplified = rdpSimplify(closed, tol);
+
+      // remove last point (duplicate first) for LWPOLYLINE (closed flag handles it)
+      let finalPts = simplified.slice(0, -1);
+
+      // guardrail: insane vertex counts can freeze CAD
+      if (finalPts.length > 5000){
+        statusBox.textContent =
+          `Warning: shape has ${finalPts.length} vertices after simplify.\n` +
+          `Increase "Boundary simplify (m)" to reduce, otherwise CAD may struggle.`;
+      }
+
+      // Also remove any NaN
+      finalPts = finalPts.filter(p => Number.isFinite(p.e) && Number.isFinite(p.n));
+
+      const ptsXY = finalPts.map(p => outXY(p)).filter(Boolean);
+      if (ptsXY.length >= 3){
+        dxf += dxfLWPolyline(ptsXY, shpLayerName, DXF_COLOR_RED, true);
+      }
     }
 
     dxf += "0\nENDSEC\n0\nEOF\n";
@@ -592,7 +1165,7 @@
     a.rel = "noopener";
     a.target = "_blank";
 
-    const name = `rectgrid_${rel ? "REL_P1" : "OSGB"}_${Math.round(L)}x${Math.round(W)}_${spacing}m.dxf`;
+    const name = `grid_${shapeType}_${rel ? "REL" : "OSGB"}_${snap10El.checked ? "10m" : (spacing+"m")}.dxf`;
     a.download = name;
 
     document.body.appendChild(a);
@@ -600,138 +1173,32 @@
     setTimeout(() => window.open(url, "_blank"), 250);
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 30000);
+
+    statusBox.textContent = `Exported: ${name}`;
   }
-
-  // ---------------------------
-  // Click handling
-  // ---------------------------
-  document.getElementById('rect3Btn').addEventListener('click', () => {
-    setMode('rect3');
-    clearRectangle();
-    statusBox.textContent = 'Rectangle mode: pick P1, then P2, then P3.';
-    modeBadge.textContent = 'pick P1';
-  });
-
-  map.on('click', (e) => {
-    const picked = getPickLatLng(e.latlng);
-
-    if (mode === 'boundary') {
-      boundaryLatLngs.push(picked);
-      redrawBoundaryPreview();
-      return;
-    }
-
-    if (mode !== 'rect3') return;
-
-    // Rectangle 3-point picking
-    const en = latLngToEN(picked);
-
-    if (!rectP1) {
-      rectP1 = en;
-      pickLayer.clearLayers();
-      drawPickPoint(picked, 'P1');
-      modeBadge.textContent = 'pick P2';
-      statusBox.textContent = 'Picked P1. Now pick P2 (length + rotation).';
-      return;
-    }
-
-    if (!rectP2) {
-      rectP2 = en;
-      drawPickPoint(picked, 'P2');
-      modeBadge.textContent = 'pick P3';
-      statusBox.textContent = 'Picked P2. Now pick P3 (width).';
-      return;
-    }
-
-    if (!rectP3) {
-      rectP3 = en;
-      drawPickPoint(picked, 'P3');
-
-      const res = computeRectangleFrom3Pts(rectP1, rectP2, rectP3);
-      if (!res) {
-        statusBox.textContent = 'Bad rectangle (points too close / width ~0). Try again.';
-        clearRectangle();
-        modeBadge.textContent = 'pick P1';
-        return;
-      }
-
-      rectLen = res.L;
-      rectWid = res.W;
-      rectU = res.u;
-      rectW = res.w;
-      rectCornersEN = res.corners;
-
-      rectInfoEl.textContent = `${rectLen.toFixed(2)} m × ${rectWid.toFixed(2)} m`;
-      statusBox.textContent = `Rectangle set: L=${rectLen.toFixed(2)}m, W=${rectWid.toFixed(2)}m. Grid drawn.`;
-      modeBadge.textContent = 'done';
-
-      redrawRectangleAndGrid();
-      // stay in rect3 mode in case you want to re-pick with the button
-    }
-  });
-
-  // ---------------------------
-  // Buttons / toggles
-  // ---------------------------
-  document.getElementById('gpsBtn').addEventListener('click', () => {
-    map.locate({ setView: true, maxZoom: 19, enableHighAccuracy: true, timeout: 15000 });
-  });
-
-  map.on('locationfound', (e) => {
-    if (window._gpsAccuracy) window._gpsAccuracy.remove();
-    window._gpsAccuracy = L.circle(e.latlng, {
-      radius: e.accuracy,
-      weight: 1,
-      opacity: 0.6,
-      fillOpacity: 0.08
-    }).addTo(map);
-    statusBox.textContent = `GPS found (±${Math.round(e.accuracy)}m).`;
-  });
-
-  map.on('locationerror', (e) => {
-    alert("Couldn't get GPS location: " + (e.message || "permission denied / unavailable"));
-  });
-
-  document.getElementById('resetBtn').addEventListener('click', () => {
-    setMode('idle');
-    clearRectangle();
-
-    boundaryLatLngs = [];
-    if (boundaryPreviewLine) boundaryPreviewLine.remove();
-    boundaryPreviewLine = null;
-    boundaryPointsLayer.clearLayers();
-    redrawBoundaryPreview();
-
-    statusBox.textContent = 'Reset.';
-  });
 
   exportBtn.addEventListener('click', exportDXF);
 
-  drawBoundaryBtn.addEventListener('click', () => {
-    setMode('boundary');
-    statusBox.textContent = 'Boundary mode: tap points, then Finish boundary.';
-  });
-
-  finishBoundaryBtn.addEventListener('click', () => {
-    setMode('idle');
-    statusBox.textContent = 'Boundary finished.';
-  });
-
-  clearBoundaryBtn.addEventListener('click', () => {
-    boundaryLatLngs = [];
-    if (boundaryPreviewLine) boundaryPreviewLine.remove();
-    boundaryPreviewLine = null;
-    boundaryPointsLayer.clearLayers();
-    redrawBoundaryPreview();
-    statusBox.textContent = 'Boundary cleared.';
-  });
-
-  gridSpacingEl.addEventListener('input', () => {
-    if (rectCornersEN) redrawRectangleAndGrid();
-  });
+  // ---------------------------
+  // UI wiring
+  // ---------------------------
+  document.getElementById('resetBtn').addEventListener('click', () => clearAll());
 
   useCrosshairEl.addEventListener('change', () => {
     crosshairEl.style.display = useCrosshairEl.checked ? 'block' : 'none';
+  });
+
+  snap10El.addEventListener('change', () => {
+    redrawAll();
+  });
+
+  document.querySelectorAll('input[name="gridOri"]').forEach(r => {
+    r.addEventListener('change', () => redrawAll());
+  });
+
+  gridSpacingEl.addEventListener('input', () => redrawAll());
+  simplifyTolEl.addEventListener('input', () => {
+    // no redraw needed; affects export only
   });
 
   // ---------------------------
@@ -755,7 +1222,6 @@
   });
 
   let dragging = false, startY = 0, startTranslateVh = snaps[currentSnap], hasMoved = false;
-
   function getTranslateVhFromStyle() {
     const m = sheet.style.transform.match(/translateY\(([-0-9.]+)vh\)/);
     return m ? parseFloat(m[1]) : snaps.half;
@@ -801,10 +1267,10 @@
   });
 
   // Startup
-  redrawBoundaryPreview();
+  clearAll();
   setMode('idle');
   loadOSTN15();
-  statusBox.textContent = 'Ready. Search top-right, GPS optional. Tap "Define rectangle".';
+  statusBox.textContent = 'Ready. Choose Rectangle or Polygon.';
 </script>
 </body>
 </html>

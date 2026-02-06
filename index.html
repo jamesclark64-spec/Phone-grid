@@ -465,11 +465,10 @@
     <div class="sheet-content">
       <!-- Mode Controls -->
       <div class="section">
-        <div class="section-title">Mode Controls</div>
+        <div class="section-title">Rectangle Controls</div>
         <div class="btn-grid">
-          <button class="btn" id="pickCentreBtn">📍 Pick Centre</button>
-          <button class="btn secondary" id="pickRotateBtn">🔄 Pick Rotation</button>
-          <button class="btn secondary" id="gpsBtn">📡 Use GPS</button>
+          <button class="btn" id="pickCentreBtn">📍 New Rectangle</button>
+          <button class="btn secondary" id="gpsBtn">📡 Go to GPS</button>
           <button class="btn secondary" id="resetBtn">🔄 Reset All</button>
         </div>
       </div>
@@ -492,10 +491,6 @@
           <input id="useCrosshair" type="checkbox" />
         </div>
         <div class="toggle">
-          <span>🧭 Auto-align to true north</span>
-          <input id="autoNorth" type="checkbox" checked />
-        </div>
-        <div class="toggle">
           <span>📐 Export relative to centre</span>
           <input id="relativeExport" type="checkbox" />
         </div>
@@ -506,12 +501,12 @@
         <div class="section-title">Grid Parameters</div>
         <div class="form-grid">
           <div class="field">
-            <label for="gridWidth">Width (m)</label>
-            <input id="gridWidth" type="number" min="1" step="1" value="300" />
+            <label>Length (m)</label>
+            <input id="gridWidth" type="text" readonly style="background:#e5e7eb;cursor:not-allowed;" value="0" />
           </div>
           <div class="field">
-            <label for="gridHeight">Height (m)</label>
-            <input id="gridHeight" type="number" min="1" step="1" value="300" />
+            <label>Width (m)</label>
+            <input id="gridHeight" type="text" readonly style="background:#e5e7eb;cursor:not-allowed;" value="0" />
           </div>
           <div class="field">
             <label for="gridSpacing">Spacing (m)</label>
@@ -555,8 +550,10 @@
       <div class="help-text">
         <strong>Quick Guide:</strong><br>
         • Search location using top-right search box<br>
-        • Pick centre point on map or use GPS<br>
-        • Drag corner grips to resize, rotate grip to rotate<br>
+        • Click 3 points to define rectangle:<br>
+        &nbsp;&nbsp;→ Point 1: Starting corner<br>
+        &nbsp;&nbsp;→ Point 2: Sets length & rotation<br>
+        &nbsp;&nbsp;→ Point 3: Sets width (perpendicular)<br>
         • Draw boundary by clicking points, then finish<br>
         • Export creates DXF with grid (blue) and boundary (red)
       </div>
@@ -581,8 +578,7 @@
   };
 
   const MODES = {
-    CENTRE: 'centre',
-    ROTATE: 'rotate',
+    RECTANGLE: 'rectangle',
     BOUNDARY: 'boundary'
   };
 
@@ -592,37 +588,25 @@
   
   class AppState {
     constructor() {
-      this.mode = MODES.CENTRE;
-      this.centreLatLng = null;
-      this.rotationRad = 0;
-      this.userRotatedManually = false;
-      this.rotatePt1 = null;
-      this.rotatePt2 = null;
+      this.mode = MODES.RECTANGLE;
+      this.rectPt1 = null; // First point (corner)
+      this.rectPt2 = null; // Second point (defines length and angle)
+      this.rectPt3 = null; // Third point (defines width)
       this.boundaryLatLngs = [];
       this.ostnReady = false;
     }
 
     reset() {
-      this.centreLatLng = null;
-      this.rotationRad = 0;
-      this.userRotatedManually = false;
-      this.rotatePt1 = null;
-      this.rotatePt2 = null;
+      this.rectPt1 = null;
+      this.rectPt2 = null;
+      this.rectPt3 = null;
       this.boundaryLatLngs = [];
-      this.mode = MODES.CENTRE;
+      this.mode = MODES.RECTANGLE;
     }
 
     setMode(newMode) {
       this.mode = newMode;
       UI.updateModeBadge(newMode);
-    }
-
-    setCentre(latlng) {
-      this.centreLatLng = latlng;
-      
-      if (DOM.autoNorth.checked && !this.userRotatedManually) {
-        this.rotationRad = Transforms.calculateTrueNorthRotation(latlng);
-      }
     }
 
     addBoundaryPoint(latlng) {
@@ -633,8 +617,53 @@
       this.boundaryLatLngs = [];
     }
 
+    clearRectangle() {
+      this.rectPt1 = null;
+      this.rectPt2 = null;
+      this.rectPt3 = null;
+    }
+
+    get hasRectangle() {
+      return this.rectPt1 && this.rectPt2 && this.rectPt3;
+    }
+
+    get rectangleDimensions() {
+      if (!this.hasRectangle) return null;
+
+      const p1 = Transforms.latLngToEN(this.rectPt1);
+      const p2 = Transforms.latLngToEN(this.rectPt2);
+      const p3 = Transforms.latLngToEN(this.rectPt3);
+
+      // Length is distance from p1 to p2
+      const length = Math.sqrt(Math.pow(p2.e - p1.e, 2) + Math.pow(p2.n - p1.n, 2));
+
+      // Angle from p1 to p2
+      const angleFromEast = Math.atan2(p2.n - p1.n, p2.e - p1.e);
+      const rotation = angleFromEast - (Math.PI / 2); // Convert to rotation from north
+
+      // Width is perpendicular distance from p3 to the line p1-p2
+      const dx = p2.e - p1.e;
+      const dy = p2.n - p1.n;
+      const lengthSq = dx * dx + dy * dy;
+      
+      // Project p3 onto the line p1-p2
+      const t = ((p3.e - p1.e) * dx + (p3.n - p1.n) * dy) / lengthSq;
+      const projE = p1.e + t * dx;
+      const projN = p1.n + t * dy;
+      
+      // Width is distance from p3 to projection
+      const width = Math.sqrt(Math.pow(p3.e - projE, 2) + Math.pow(p3.n - projN, 2));
+
+      // Centre is midpoint of the rectangle
+      const centreE = p1.e + dx / 2 + (p3.e - projE) / 2;
+      const centreN = p1.n + dy / 2 + (p3.n - projN) / 2;
+
+      return { length, width, rotation, centreE, centreN };
+    }
+
     get rotationDegrees() {
-      return (this.rotationRad * 180 / Math.PI);
+      const dims = this.rectangleDimensions;
+      return dims ? (dims.rotation * 180 / Math.PI) : 0;
     }
   }
 
@@ -647,7 +676,6 @@
   const DOM = {
     // Controls
     pickCentreBtn: document.getElementById('pickCentreBtn'),
-    pickRotateBtn: document.getElementById('pickRotateBtn'),
     gpsBtn: document.getElementById('gpsBtn'),
     resetBtn: document.getElementById('resetBtn'),
     exportBtn: document.getElementById('exportBtn'),
@@ -659,7 +687,6 @@
     
     // Toggles
     useCrosshair: document.getElementById('useCrosshair'),
-    autoNorth: document.getElementById('autoNorth'),
     relativeExport: document.getElementById('relativeExport'),
     
     // Inputs
@@ -701,10 +728,9 @@
   // Map layers
   const layers = {
     grid: L.layerGroup().addTo(map),
-    grips: L.layerGroup().addTo(map),
+    rectangleMarkers: L.layerGroup().addTo(map),
+    rectanglePreview: null,
     boundaryPoints: L.layerGroup().addTo(map),
-    centreMarker: null,
-    rotateMarkers: [],
     boundaryLine: null,
     gpsAccuracy: null
   };
@@ -841,17 +867,16 @@
     },
 
     export() {
-      if (!state.centreLatLng) {
-        UI.showError("Please pick a centre point first");
+      if (!state.hasRectangle) {
+        UI.showError("Please define rectangle by picking 3 points first");
         return;
       }
 
-      const width = parseFloat(DOM.gridWidth.value);
-      const height = parseFloat(DOM.gridHeight.value);
+      const dims = state.rectangleDimensions;
       const spacing = parseFloat(DOM.gridSpacing.value);
 
-      if (!(width > 0) || !(height > 0) || !(spacing > 0)) {
-        UI.showError("Width, height and spacing must be greater than 0");
+      if (!(spacing > 0)) {
+        UI.showError("Grid spacing must be greater than 0");
         return;
       }
 
@@ -859,15 +884,15 @@
       const boundaryLayer = (DOM.boundaryLayerName.value || "BOUNDARY").trim();
       const relative = DOM.relativeExport.checked;
 
-      const centreEN = Transforms.latLngToEN(state.centreLatLng);
+      const centre = { e: dims.centreE, n: dims.centreN };
       const linesEN = GridGenerator.generateLines(
-        centreEN, width, height, spacing, state.rotationRad
+        centre, dims.length, dims.width, spacing, dims.rotation
       );
 
       // Convert to DXF coordinates
       const lines = linesEN.map(l => relative ? {
-        x1: l.e1 - centreEN.e, y1: l.n1 - centreEN.n,
-        x2: l.e2 - centreEN.e, y2: l.n2 - centreEN.n
+        x1: l.e1 - centre.e, y1: l.n1 - centre.n,
+        x2: l.e2 - centre.e, y2: l.n2 - centre.n
       } : {
         x1: l.e1, y1: l.n1,
         x2: l.e2, y2: l.n2
@@ -879,7 +904,7 @@
         boundaryPoints = state.boundaryLatLngs.map(ll => {
           const en = Transforms.latLngToEN(ll);
           return relative ? 
-            { x: en.e - centreEN.e, y: en.n - centreEN.n } :
+            { x: en.e - centre.e, y: en.n - centre.n } :
             { x: en.e, y: en.n };
         });
       }
@@ -913,9 +938,9 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       
-      const deg = state.rotationDegrees.toFixed(1);
+      const deg = (dims.rotation * 180 / Math.PI).toFixed(1);
       const coords = relative ? "REL" : "OSGB";
-      a.download = `grid_${coords}_${width}x${height}_${spacing}m_${deg}deg.dxf`;
+      a.download = `grid_${coords}_${dims.length.toFixed(0)}x${dims.width.toFixed(0)}_${spacing}m_${deg}deg.dxf`;
       a.href = url;
       a.style.display = "none";
       
@@ -937,18 +962,33 @@
   
   const UI = {
     updateModeBadge(mode) {
-      DOM.modeBadge.textContent = 
-        mode === MODES.CENTRE ? 'Centre Pick' :
-        mode === MODES.ROTATE ? 'Rotation Pick' :
-        'Boundary Draw';
-      
-      DOM.modeBadge.className = 'status-badge';
-      if (mode === MODES.ROTATE) DOM.modeBadge.classList.add('mode-rotate');
-      if (mode === MODES.BOUNDARY) DOM.modeBadge.classList.add('mode-boundary');
+      if (mode === MODES.RECTANGLE) {
+        if (!state.rectPt1) {
+          DOM.modeBadge.textContent = 'Pick Point 1 (corner)';
+        } else if (!state.rectPt2) {
+          DOM.modeBadge.textContent = 'Pick Point 2 (length)';
+        } else if (!state.rectPt3) {
+          DOM.modeBadge.textContent = 'Pick Point 3 (width)';
+        } else {
+          DOM.modeBadge.textContent = 'Rectangle Complete';
+        }
+        DOM.modeBadge.className = 'status-badge';
+      } else if (mode === MODES.BOUNDARY) {
+        DOM.modeBadge.textContent = 'Boundary Draw';
+        DOM.modeBadge.className = 'status-badge mode-boundary';
+      }
     },
 
     updateRotationDisplay() {
       DOM.rotDeg.textContent = state.rotationDegrees.toFixed(3) + '°';
+    },
+
+    updateDimensionsDisplay() {
+      const dims = state.rectangleDimensions;
+      if (dims) {
+        DOM.gridWidth.value = Math.round(dims.length);
+        DOM.gridHeight.value = Math.round(dims.width);
+      }
     },
 
     updateCoordinatesDisplay(latlng) {
@@ -996,6 +1036,10 @@
       } else {
         DOM.drawBoundaryBtn.textContent = '✏️ Draw Boundary';
       }
+    },
+
+    updateExportButton() {
+      DOM.exportBtn.disabled = !state.hasRectangle;
     }
   };
 
@@ -1006,28 +1050,132 @@
   const Renderer = {
     clearAll() {
       layers.grid.clearLayers();
-      layers.grips.clearLayers();
+      layers.rectangleMarkers.clearLayers();
       layers.boundaryPoints.clearLayers();
+      if (layers.rectanglePreview) {
+        layers.rectanglePreview.remove();
+        layers.rectanglePreview = null;
+      }
       if (layers.boundaryLine) {
         layers.boundaryLine.remove();
         layers.boundaryLine = null;
       }
     },
 
+    redrawRectangleMarkers() {
+      layers.rectangleMarkers.clearLayers();
+      if (layers.rectanglePreview) {
+        layers.rectanglePreview.remove();
+        layers.rectanglePreview = null;
+      }
+
+      const points = [state.rectPt1, state.rectPt2, state.rectPt3].filter(p => p);
+      
+      points.forEach((pt, idx) => {
+        const color = idx === 0 ? '#2563eb' : idx === 1 ? '#7c3aed' : '#16a34a';
+        const label = idx === 0 ? '1' : idx === 1 ? '2' : '3';
+        
+        L.circleMarker(pt, {
+          radius: 10,
+          color: color,
+          weight: 3,
+          opacity: 0.9,
+          fillColor: 'white',
+          fillOpacity: 0.9
+        }).addTo(layers.rectangleMarkers);
+
+        // Add number label
+        L.marker(pt, {
+          icon: L.divIcon({
+            className: '',
+            html: `<div style="background:${color};color:white;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.3);">${label}</div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+          })
+        }).addTo(layers.rectangleMarkers);
+      });
+
+      // Draw preview lines
+      if (state.rectPt1 && state.rectPt2) {
+        const line = L.polyline([state.rectPt1, state.rectPt2], {
+          color: '#7c3aed',
+          weight: 3,
+          opacity: 0.7,
+          dashArray: '5, 10'
+        }).addTo(layers.rectangleMarkers);
+      }
+
+      if (state.rectPt2 && state.rectPt3) {
+        // Draw perpendicular guide
+        const p1 = Transforms.latLngToEN(state.rectPt1);
+        const p2 = Transforms.latLngToEN(state.rectPt2);
+        const p3 = Transforms.latLngToEN(state.rectPt3);
+
+        // Find projection of p3 onto line p1-p2
+        const dx = p2.e - p1.e;
+        const dy = p2.n - p1.n;
+        const lengthSq = dx * dx + dy * dy;
+        const t = ((p3.e - p1.e) * dx + (p3.n - p1.n) * dy) / lengthSq;
+        const projE = p1.e + t * dx;
+        const projN = p1.n + t * dy;
+        const projLL = Transforms.enToLatLng(projE, projN);
+
+        L.polyline([state.rectPt3, projLL], {
+          color: '#16a34a',
+          weight: 2,
+          opacity: 0.7,
+          dashArray: '5, 5'
+        }).addTo(layers.rectangleMarkers);
+      }
+
+      // Draw full rectangle if all points set
+      if (state.hasRectangle) {
+        const dims = state.rectangleDimensions;
+        const centre = { e: dims.centreE, n: dims.centreN };
+        
+        // Calculate 4 corners
+        const halfL = dims.length / 2;
+        const halfW = dims.width / 2;
+        const corners = [
+          { x: -halfL, y: -halfW },
+          { x: halfL, y: -halfW },
+          { x: halfL, y: halfW },
+          { x: -halfL, y: halfW }
+        ];
+
+        const cornerLatLngs = corners.map(c => {
+          const p = Transforms.rotatePoint(
+            centre.e + c.x,
+            centre.n + c.y,
+            centre.e, centre.n,
+            dims.rotation
+          );
+          return Transforms.enToLatLng(p.e, p.n);
+        });
+
+        cornerLatLngs.push(cornerLatLngs[0]); // Close the rectangle
+
+        layers.rectanglePreview = L.polyline(cornerLatLngs, {
+          color: '#2563eb',
+          weight: 3,
+          opacity: 0.8
+        }).addTo(map);
+      }
+    },
+
     redrawGrid() {
       layers.grid.clearLayers();
       
-      if (!state.centreLatLng) return;
+      if (!state.hasRectangle) return;
 
-      const width = parseFloat(DOM.gridWidth.value);
-      const height = parseFloat(DOM.gridHeight.value);
+      const dims = state.rectangleDimensions;
       const spacing = parseFloat(DOM.gridSpacing.value);
 
-      if (!(width > 0) || !(height > 0) || !(spacing > 0)) return;
+      if (!(spacing > 0)) return;
 
-      const centreEN = Transforms.latLngToEN(state.centreLatLng);
+      const centre = { e: dims.centreE, n: dims.centreN };
       const lines = GridGenerator.generateLines(
-        centreEN, width, height, spacing, state.rotationRad
+        centre, dims.length, dims.width, spacing, dims.rotation
       );
 
       for (const ln of lines) {
@@ -1041,81 +1189,6 @@
       }
     },
 
-    redrawGrips() {
-      layers.grips.clearLayers();
-      
-      if (!state.centreLatLng) return;
-
-      const width = parseFloat(DOM.gridWidth.value);
-      const height = parseFloat(DOM.gridHeight.value);
-
-      if (!(width > 0) || !(height > 0)) return;
-
-      const centreEN = Transforms.latLngToEN(state.centreLatLng);
-      const halfW = width / 2;
-      const halfH = height / 2;
-
-      // Corner grips
-      const corners = [
-        { x: -halfW, y: -halfH },
-        { x: halfW, y: -halfH },
-        { x: halfW, y: halfH },
-        { x: -halfW, y: halfH }
-      ];
-
-      corners.forEach(corner => {
-        const p = Transforms.rotatePoint(
-          centreEN.e + corner.x,
-          centreEN.n + corner.y,
-          centreEN.e, centreEN.n,
-          state.rotationRad
-        );
-        const ll = Transforms.enToLatLng(p.e, p.n);
-
-        const marker = L.marker(ll, {
-          draggable: true,
-          icon: L.divIcon({
-            className: '',
-            html: '<div class="grip"></div>',
-            iconSize: [28, 28],
-            iconAnchor: [14, 14]
-          }),
-          keyboard: false,
-          autoPan: true,
-          autoPanPadding: [50, 50]
-        }).addTo(layers.grips);
-
-        this.preventGestureConflicts(marker);
-        this.setupCornerGripDrag(marker);
-      });
-
-      // Rotation grip
-      const rotOffset = Math.max(halfH * 1.3, 15);
-      const rotP = Transforms.rotatePoint(
-        centreEN.e,
-        centreEN.n + rotOffset,
-        centreEN.e, centreEN.n,
-        state.rotationRad
-      );
-      const rotLL = Transforms.enToLatLng(rotP.e, rotP.n);
-
-      const rotMarker = L.marker(rotLL, {
-        draggable: true,
-        icon: L.divIcon({
-          className: '',
-          html: '<div class="rot-grip"></div>',
-          iconSize: [32, 32],
-          iconAnchor: [16, 16]
-        }),
-        keyboard: false,
-        autoPan: true,
-        autoPanPadding: [50, 50]
-      }).addTo(layers.grips);
-
-      this.preventGestureConflicts(rotMarker);
-      this.setupRotationGripDrag(rotMarker);
-    },
-
     redrawBoundary() {
       layers.boundaryPoints.clearLayers();
       if (layers.boundaryLine) {
@@ -1125,14 +1198,12 @@
 
       if (state.boundaryLatLngs.length === 0) return;
 
-      // Draw line
       layers.boundaryLine = L.polyline(state.boundaryLatLngs, {
         color: '#dc2626',
         weight: 3,
         opacity: 0.9
       }).addTo(map);
 
-      // Draw points
       state.boundaryLatLngs.forEach(ll => {
         L.circleMarker(ll, {
           radius: 6,
@@ -1146,89 +1217,14 @@
     },
 
     redrawAll() {
+      this.redrawRectangleMarkers();
       this.redrawGrid();
-      this.redrawGrips();
       this.redrawBoundary();
       UI.updateRotationDisplay();
+      UI.updateDimensionsDisplay();
       UI.updateBoundaryButtons();
-    },
-
-    preventGestureConflicts(marker) {
-      marker.on('add', () => {
-        const el = marker.getElement();
-        if (!el) return;
-
-        L.DomEvent.disableClickPropagation(el);
-        L.DomEvent.disableScrollPropagation(el);
-
-        const stop = (e) => L.DomEvent.stopPropagation(e);
-        ['pointerdown', 'pointermove', 'pointerup',
-         'touchstart', 'touchmove', 'touchend',
-         'mousedown', 'mousemove', 'mouseup']
-          .forEach(evt => L.DomEvent.on(el, evt, stop));
-      });
-    },
-
-    setupCornerGripDrag(marker) {
-      marker.on('dragstart', () => {
-        map.dragging.disable();
-        map.doubleClickZoom.disable();
-        map.scrollWheelZoom.disable();
-        map.touchZoom.disable();
-      });
-
-      marker.on('dragend', () => {
-        map.dragging.enable();
-        map.doubleClickZoom.enable();
-        map.scrollWheelZoom.enable();
-        map.touchZoom.enable();
-      });
-
-      marker.on('drag', () => {
-        // Get fresh centre coordinates each time
-        const centreEN = Transforms.latLngToEN(state.centreLatLng);
-        const p = Transforms.latLngToEN(marker.getLatLng());
-        const dE = p.e - centreEN.e;
-        const dN = p.n - centreEN.n;
-
-        const local = Transforms.rotateVector(dE, dN, -state.rotationRad);
-
-        const newHalfW = Math.max(1, Math.abs(local.e));
-        const newHalfH = Math.max(1, Math.abs(local.n));
-
-        DOM.gridWidth.value = Math.round(newHalfW * 2);
-        DOM.gridHeight.value = Math.round(newHalfH * 2);
-
-        this.redrawAll();
-      });
-    },
-
-    setupRotationGripDrag(marker) {
-      marker.on('dragstart', () => {
-        state.userRotatedManually = true;
-        map.dragging.disable();
-        map.doubleClickZoom.disable();
-        map.scrollWheelZoom.disable();
-        map.touchZoom.disable();
-      });
-
-      marker.on('dragend', () => {
-        map.dragging.enable();
-        map.doubleClickZoom.enable();
-        map.scrollWheelZoom.enable();
-        map.touchZoom.enable();
-      });
-
-      marker.on('drag', () => {
-        // Get fresh centre coordinates each time
-        const centreEN = Transforms.latLngToEN(state.centreLatLng);
-        const p = Transforms.latLngToEN(marker.getLatLng());
-        const dE = p.e - centreEN.e;
-        const dN = p.n - centreEN.n;
-        const angleFromEast = Math.atan2(dN, dE);
-        state.rotationRad = angleFromEast - (Math.PI / 2);
-        this.redrawAll();
-      });
+      UI.updateExportButton();
+      UI.updateModeBadge(state.mode);
     }
   };
 
@@ -1251,85 +1247,29 @@
           UI.updateBoundaryButtons();
           break;
 
-        case MODES.CENTRE:
-          this.setCentre(latlng);
-          break;
-
-        case MODES.ROTATE:
-          this.handleRotatePick(latlng);
+        case MODES.RECTANGLE:
+          this.handleRectangleClick(latlng);
           break;
       }
     },
 
-    setCentre(latlng) {
-      state.setCentre(latlng);
-
-      // Update or create centre marker
-      if (layers.centreMarker) {
-        layers.centreMarker.setLatLng(latlng);
-      } else {
-        layers.centreMarker = L.marker(latlng, {
-          draggable: true,
-          icon: L.icon({
-            iconUrl: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNSIgaGVpZ2h0PSI0MSI+PHBhdGggZD0iTTEyLjUgMEMxOS40MDQgMCAyNSA1LjU5NiAyNSAxMi41IDI1IDE5LjQwNCAxMi41IDQxIDEyLjUgNDFTMCAyMS40MDQgMCAxMi41QzAgNS41OTYgNS41OTYgMCAxMi41IDB6IiBmaWxsPSIjMjU2M2ViIi8+PGNpcmNsZSBjeD0iMTIuNSIgY3k9IjEyLjUiIHI9IjUiIGZpbGw9IiNmZmYiLz48L3N2Zz4=',
-            iconSize: [25, 41],
-            iconAnchor: [12.5, 41]
-          })
-        }).addTo(map);
-
-        layers.centreMarker.on('drag', () => {
-          state.setCentre(layers.centreMarker.getLatLng());
-          Renderer.redrawAll();
-          UI.updateCoordinatesDisplay(state.centreLatLng);
-        });
-      }
-
-      Renderer.redrawAll();
-      UI.updateCoordinatesDisplay(latlng);
-      UI.showSuccess('Centre point set');
-      DOM.exportBtn.disabled = false;
-    },
-
-    handleRotatePick(latlng) {
-      state.userRotatedManually = true;
-
-      if (!state.rotatePt1) {
-        state.rotatePt1 = latlng;
-        const m = L.circleMarker(latlng, {
-          radius: 8,
-          color: '#7c3aed',
-          weight: 3,
-          fillColor: 'white',
-          fillOpacity: 0.9
-        }).addTo(map);
-        layers.rotateMarkers.push(m);
-        UI.showStatus('Click second point to set rotation', 'warning');
-        return;
-      }
-
-      if (!state.rotatePt2) {
-        state.rotatePt2 = latlng;
-        const m = L.circleMarker(latlng, {
-          radius: 8,
-          color: '#7c3aed',
-          weight: 3,
-          fillColor: 'white',
-          fillOpacity: 0.9
-        }).addTo(map);
-        layers.rotateMarkers.push(m);
-
-        // Calculate rotation
-        const p1 = Transforms.latLngToEN(state.rotatePt1);
-        const p2 = Transforms.latLngToEN(state.rotatePt2);
-        const angleFromEast = Math.atan2(p2.n - p1.n, p2.e - p1.e);
-        state.rotationRad = angleFromEast - (Math.PI / 2);
-
+    handleRectangleClick(latlng) {
+      if (!state.rectPt1) {
+        state.rectPt1 = latlng;
+        UI.showStatus('Point 1 set. Click for Point 2 to set length and angle');
         Renderer.redrawAll();
-        UI.showSuccess('Rotation set');
-
-        // Reset for next rotation
-        state.rotatePt1 = null;
-        state.rotatePt2 = null;
+      } else if (!state.rectPt2) {
+        state.rectPt2 = latlng;
+        UI.showStatus('Point 2 set. Click for Point 3 to set width');
+        Renderer.redrawAll();
+      } else if (!state.rectPt3) {
+        state.rectPt3 = latlng;
+        const dims = state.rectangleDimensions;
+        UI.showSuccess(
+          `Rectangle complete! ${dims.length.toFixed(1)}m × ${dims.width.toFixed(1)}m ` +
+          `at ${dims.rotation.toFixed(1)}°`
+        );
+        Renderer.redrawAll();
       }
     }
   };
@@ -1348,7 +1288,8 @@
   });
 
   map.on('locationfound', (e) => {
-    MapInteraction.setCentre(e.latlng);
+    // Just center the map on GPS location
+    map.setView(e.latlng, 18);
     
     if (layers.gpsAccuracy) layers.gpsAccuracy.remove();
     layers.gpsAccuracy = L.circle(e.latlng, {
@@ -1359,7 +1300,7 @@
       fillOpacity: 0.1
     }).addTo(map);
 
-    map.setView(e.latlng, 18);
+    UI.showSuccess('GPS location found. Click map to pick rectangle points.');
   });
 
   map.on('locationerror', (e) => {
@@ -1368,21 +1309,10 @@
 
   // Button events
   DOM.pickCentreBtn.addEventListener('click', () => {
-    state.setMode(MODES.CENTRE);
-    if (DOM.useCrosshair.checked) {
-      MapInteraction.setCentre(map.getCenter());
-    } else {
-      UI.showStatus('Click on map to set centre point');
-    }
-  });
-
-  DOM.pickRotateBtn.addEventListener('click', () => {
-    state.setMode(MODES.ROTATE);
-    state.rotatePt1 = null;
-    state.rotatePt2 = null;
-    layers.rotateMarkers.forEach(m => m.remove());
-    layers.rotateMarkers = [];
-    UI.showStatus('Click two points to set rotation angle');
+    state.setMode(MODES.RECTANGLE);
+    state.clearRectangle();
+    Renderer.redrawAll();
+    UI.showStatus('Click 3 points: (1) corner, (2) length, (3) width');
   });
 
   DOM.gpsBtn.addEventListener('click', () => {
@@ -1396,17 +1326,9 @@
   });
 
   DOM.resetBtn.addEventListener('click', () => {
-    if (!confirm('Reset all? This will clear centre, rotation, and boundary.')) return;
+    if (!confirm('Reset all? This will clear rectangle and boundary.')) return;
 
     state.reset();
-    
-    if (layers.centreMarker) {
-      layers.centreMarker.remove();
-      layers.centreMarker = null;
-    }
-    
-    layers.rotateMarkers.forEach(m => m.remove());
-    layers.rotateMarkers = [];
     
     if (layers.gpsAccuracy) {
       layers.gpsAccuracy.remove();
@@ -1414,11 +1336,9 @@
     }
 
     Renderer.clearAll();
-    UI.updateRotationDisplay();
-    UI.updateBoundaryButtons();
+    Renderer.redrawAll();
     UI.updateCoordinatesDisplay(null);
-    UI.showStatus('Reset complete');
-    DOM.exportBtn.disabled = true;
+    UI.showStatus('Reset complete. Click map to start defining rectangle.');
   });
 
   DOM.drawBoundaryBtn.addEventListener('click', () => {
@@ -1427,7 +1347,7 @@
   });
 
   DOM.finishBoundaryBtn.addEventListener('click', () => {
-    state.setMode(MODES.CENTRE);
+    state.setMode(MODES.RECTANGLE);
     UI.showSuccess(`Boundary complete with ${state.boundaryLatLngs.length} points`);
   });
 
@@ -1437,23 +1357,14 @@
     state.clearBoundary();
     Renderer.redrawBoundary();
     UI.updateBoundaryButtons();
-    state.setMode(MODES.CENTRE);
+    state.setMode(MODES.RECTANGLE);
     UI.showStatus('Boundary cleared');
   });
 
   DOM.exportBtn.addEventListener('click', () => DXFExporter.export());
 
   // Input events
-  [DOM.gridWidth, DOM.gridHeight, DOM.gridSpacing].forEach(input => {
-    input.addEventListener('input', () => Renderer.redrawAll());
-  });
-
-  DOM.autoNorth.addEventListener('change', () => {
-    if (state.centreLatLng && DOM.autoNorth.checked && !state.userRotatedManually) {
-      state.rotationRad = Transforms.calculateTrueNorthRotation(state.centreLatLng);
-      Renderer.redrawAll();
-    }
-  });
+  DOM.gridSpacing.addEventListener('input', () => Renderer.redrawAll());
 
   DOM.useCrosshair.addEventListener('change', () => {
     DOM.crosshair.style.display = DOM.useCrosshair.checked ? 'block' : 'none';
@@ -1547,12 +1458,8 @@
       state.ostnReady = true;
       
       UI.showSuccess('✓ OSTN15 loaded - OSGB36(15) coordinate system ready');
-      DOM.exportBtn.disabled = false;
 
-      if (state.centreLatLng && DOM.autoNorth.checked && !state.userRotatedManually) {
-        state.rotationRad = Transforms.calculateTrueNorthRotation(state.centreLatLng);
-        Renderer.redrawAll();
-      }
+      Renderer.redrawAll();
     } catch (error) {
       console.error('OSTN15 load failed:', error);
       
@@ -1568,7 +1475,6 @@
       );
       
       state.ostnReady = false;
-      DOM.exportBtn.disabled = false;
     }
   }
 
@@ -1593,11 +1499,12 @@
   (async function initialize() {
     UI.updateRotationDisplay();
     UI.updateBoundaryButtons();
+    UI.updateExportButton();
     UI.showStatus('Initializing...');
     
     await initializeOSTN15();
     
-    UI.showStatus('Ready! Search for location or click map to begin.');
+    UI.showStatus('Ready! Click map to pick Point 1 (starting corner)');
   })();
 
 </script>

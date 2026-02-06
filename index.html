@@ -148,6 +148,7 @@
       padding:10px;
       border-radius:14px;
       white-space:pre-wrap;
+      overflow-wrap:anywhere;
     }
     .mini { margin-top:8px; font-size:12px; color:#374151; line-height:1.35; }
 
@@ -400,7 +401,7 @@
   }
   function perpLeft(u){ return {e:-u.n, n:u.e}; }
 
-  // True north "north of the page" (map is north-up), using tiny dLat
+  // True north "north of the page" (map is north-up)
   function pageNorthBasisAtLatLng(latlng){
     const dLat = 0.0002;
     const p0 = latLngToEN(latlng);
@@ -522,7 +523,6 @@
       }
     }
 
-    // Display: angle from EN-north to grid up (gy)
     gridAngleRad = Math.atan2(gridBasis.gy.e, gridBasis.gy.n);
     updateGridAngleDisplay();
   }
@@ -657,7 +657,7 @@
   }
 
   // ---------------------------
-  // Boundary simplify helpers (for DXF stability)
+  // Boundary simplify helpers
   // ---------------------------
   function removeNearDuplicates(pts, eps=0.001){
     const out = [];
@@ -670,7 +670,6 @@
     return out;
   }
 
-  // Ramer–Douglas–Peucker simplify (expects OPEN chain)
   function rdpSimplify(points, tol){
     if (tol <= 0 || points.length < 3) return points;
 
@@ -703,11 +702,14 @@
   }
 
   // ---------------------------
-  // DXF export — SAFE VERSION
+  // DXF export — Mobile-friendly (Brave) version
+  // - CRLF line endings
+  // - boundary exported as LINE segments
+  // - includes manual download link in status box
   // ---------------------------
   const DXF_COLOR_RED = 1;
   const DXF_COLOR_BLUE = 5;
-  const EOL = "\r\n"; // CRLF
+  const EOL = "\r\n";
 
   function dxfLineEntity(x1, y1, x2, y2, layer, aciColor) {
     if (![x1,y1,x2,y2].every(Number.isFinite)) return "";
@@ -738,6 +740,12 @@
       out += dxfLineEntity(a.x, a.y, b.x, b.y, layer, aciColor);
     }
     return out;
+  }
+
+  function clearStatusLinks(){
+    // remove any previous manual links
+    const links = statusBox.querySelectorAll('a[data-manual-download="1"]');
+    links.forEach(a => a.remove());
   }
 
   function exportDXF(){
@@ -823,16 +831,14 @@
       }
     }
 
-    // Boundary RED as LINE segments (more compatible than LWPOLYLINE)
+    // Boundary RED as LINE segments
     const tol = Math.max(0, parseFloat(simplifyTolEl.value) || 0);
     let shp = removeNearDuplicates(clipPoly.slice(), 0.001);
 
     if (shp.length >= 3){
-      // Close it, simplify, then drop the duplicate closing point
       const closed = shp.concat([shp[0]]);
       const simplified = rdpSimplify(closed, tol);
       const finalPts = simplified.slice(0, -1);
-
       const ptsXY = finalPts.map(outXY).filter(Boolean);
       dxf += exportBoundaryAsLines(ptsXY, shpLayerName, DXF_COLOR_RED, true);
       entities += ptsXY.length;
@@ -840,28 +846,50 @@
 
     dxf += ["0","ENDSEC","0","EOF"].join(EOL) + EOL;
 
+    clearStatusLinks();
+
     if (entities > 60000) {
       statusBox.textContent =
         `Warning: exporting ~${entities.toLocaleString()} entities.\n` +
         `If CAD hangs, increase spacing or increase simplify (m).`;
+    } else {
+      statusBox.textContent = `Building DXF… (${entities.toLocaleString()} entities)`;
     }
 
-    const blob = new Blob([dxf], { type: "application/dxf" });
+    const filename = `grid_${shapeType}_${rel ? "REL" : "OSGB"}_${spacing.toFixed(3)}m.dxf`;
+
+    // IMPORTANT: use octet-stream; Brave sometimes dislikes application/dxf
+    const blob = new Blob([dxf], { type: "application/octet-stream" });
     const url = URL.createObjectURL(blob);
 
+    // Manual “tap to download” link (works even if auto-download blocked)
+    const manual = document.createElement("a");
+    manual.href = url;
+    manual.download = filename;
+    manual.textContent = `Tap here if download didn’t start: ${filename}`;
+    manual.dataset.manualDownload = "1";
+    manual.style.display = "block";
+    manual.style.marginTop = "10px";
+    manual.style.fontWeight = "900";
+    manual.style.color = "#111827";
+    manual.style.textDecoration = "underline";
+
+    // Try auto-download (still keep manual link)
     const a = document.createElement("a");
     a.href = url;
+    a.download = filename;
     a.style.display = "none";
-    a.rel = "noopener";
-    a.download = `grid_${shapeType}_${rel ? "REL" : "OSGB"}_${spacing.toFixed(3)}m.dxf`;
-
     document.body.appendChild(a);
-    a.click();
-    setTimeout(() => window.open(url, "_blank"), 250); // mobile fallback
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
 
-    statusBox.textContent = `Exported DXF (${spacing.toFixed(3)}m).`;
+    statusBox.textContent = `Export ready.`;
+    statusBox.appendChild(document.createElement("br"));
+    statusBox.appendChild(manual);
+
+    try { a.click(); } catch (e) {}
+    a.remove();
+
+    // Don’t revoke too quickly (mobile needs time)
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
   }
 
   // ---------------------------
@@ -902,7 +930,7 @@
     shapeType = 'poly';
     polyEN = [];
     rP1=rP2=rP3=null;
-    rectU=null; rectLen=0; rectWid=0; rectCornersEN=null;
+    rectU=null; rectCornersEN=null;
     exportOriginEN = null;
 
     pickLayer.clearLayers(); gridLayer.clearLayers(); shapeLayer.clearLayers();

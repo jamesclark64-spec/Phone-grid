@@ -1086,7 +1086,7 @@
         }).addTo(layers.grips);
 
         this.preventGestureConflicts(marker);
-        this.setupCornerGripDrag(marker, centreEN);
+        this.setupCornerGripDrag(marker);
       });
 
       // Rotation grip
@@ -1113,7 +1113,7 @@
       }).addTo(layers.grips);
 
       this.preventGestureConflicts(rotMarker);
-      this.setupRotationGripDrag(rotMarker, centreEN);
+      this.setupRotationGripDrag(rotMarker);
     },
 
     redrawBoundary() {
@@ -1169,7 +1169,7 @@
       });
     },
 
-    setupCornerGripDrag(marker, centreEN) {
+    setupCornerGripDrag(marker) {
       marker.on('dragstart', () => {
         map.dragging.disable();
         map.doubleClickZoom.disable();
@@ -1185,6 +1185,8 @@
       });
 
       marker.on('drag', () => {
+        // Get fresh centre coordinates each time
+        const centreEN = Transforms.latLngToEN(state.centreLatLng);
         const p = Transforms.latLngToEN(marker.getLatLng());
         const dE = p.e - centreEN.e;
         const dN = p.n - centreEN.n;
@@ -1201,7 +1203,7 @@
       });
     },
 
-    setupRotationGripDrag(marker, centreEN) {
+    setupRotationGripDrag(marker) {
       marker.on('dragstart', () => {
         state.userRotatedManually = true;
         map.dragging.disable();
@@ -1218,6 +1220,8 @@
       });
 
       marker.on('drag', () => {
+        // Get fresh centre coordinates each time
+        const centreEN = Transforms.latLngToEN(state.centreLatLng);
         const p = Transforms.latLngToEN(marker.getLatLng());
         const dE = p.e - centreEN.e;
         const dN = p.n - centreEN.n;

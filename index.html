@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>OSGB36 Grid + Boundary → DXF Export</title>
+  <title>OSGB36(15) 3-Point Rectangle Grid + Boundary → DXF</title>
 
   <!-- Leaflet -->
   <link rel="stylesheet"
@@ -24,429 +24,168 @@
   <script src="https://cdn.jsdelivr.net/npm/geotiff"></script>
 
   <style>
-    * { box-sizing: border-box; }
-    :root {
-      --pad: 14px;
-      --radius: 18px;
-      --primary: #2563eb;
-      --primary-dark: #1d4ed8;
-      --secondary: #64748b;
-      --danger: #dc2626;
-      --success: #16a34a;
-      --bg-dark: #0f172a;
-      --text-light: #f8fafc;
-      --border: #e2e8f0;
-    }
-    
-    html, body {
-      height: 100%;
-      margin: 0;
-      background: var(--bg-dark);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    }
-    
+    :root { --pad: 12px; --radius: 16px; }
+    html, body { height: 100%; margin: 0; background: #0b0f19; }
     #map { height: 100%; width: 100%; }
-
     .leaflet-top, .leaflet-bottom { z-index: 10050 !important; }
 
-    /* Bottom Sheet */
     .sheet {
       position: fixed;
       left: 0; right: 0; bottom: 0;
       z-index: 9999;
-      background: rgba(255,255,255,0.98);
-      backdrop-filter: blur(10px);
+      background: rgba(255,255,255,0.96);
       border-top-left-radius: var(--radius);
       border-top-right-radius: var(--radius);
-      box-shadow: 0 -8px 32px rgba(0,0,0,0.2);
+      box-shadow: 0 -12px 24px rgba(0,0,0,0.25);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 
-      height: 82vh;
-      transform: translateY(48vh);
-      transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+      height: 78vh;
+      transform: translateY(44vh);
+      transition: transform 180ms ease;
       will-change: transform;
 
       padding: var(--pad);
       padding-bottom: calc(var(--pad) + env(safe-area-inset-bottom));
-      overflow-y: auto;
+      overflow: auto;
       -webkit-overflow-scrolling: touch;
     }
-
     .handle {
-      width: 48px;
-      height: 5px;
-      background: #cbd5e1;
+      width: 54px; height: 6px;
+      background: #d1d5db;
       border-radius: 999px;
-      margin: 8px auto 16px auto;
-      cursor: grab;
+      margin: 6px auto 12px auto;
       touch-action: none;
-      transition: background 150ms;
     }
-    
-    .handle:hover { background: #94a3b8; }
-    .handle:active { cursor: grabbing; }
-
     .sheet.is-collapsed { overflow: hidden; }
-    .sheet.is-collapsed .sheet-content { display: none; }
+    .sheet.is-collapsed .mini,
+    .sheet.is-collapsed .status { display: none; }
 
-    /* Header */
-    .header {
+    .toprow {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 16px;
-      padding-bottom: 12px;
-      border-bottom: 2px solid var(--border);
-    }
-
-    .title {
-      font-weight: 800;
-      font-size: 18px;
-      color: var(--bg-dark);
-    }
-    
-    .status-badge {
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      background: var(--primary);
-      color: white;
-      padding: 6px 12px;
-      border-radius: 12px;
-      white-space: nowrap;
-    }
-    
-    .status-badge.mode-rotate { background: #7c3aed; }
-    .status-badge.mode-boundary { background: #dc2626; }
-
-    /* Sections */
-    .section {
-      margin-bottom: 20px;
-    }
-    
-    .section-title {
-      font-size: 13px;
-      font-weight: 700;
-      color: var(--secondary);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
+      gap: 10px;
       margin-bottom: 10px;
     }
+    .title { font-weight: 900; font-size: 16px; }
+    .badge {
+      font-size: 12px;
+      background: #e5e7eb;
+      padding: 4px 10px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
 
-    /* Button Grid */
-    .btn-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    .row {
+      display: flex;
       gap: 10px;
+      align-items: center;
+      margin-top: 10px;
+      flex-wrap: wrap;
     }
 
     .btn {
-      padding: 14px 16px;
-      font-size: 14px;
-      font-weight: 700;
-      border: none;
-      border-radius: 12px;
-      background: var(--primary);
+      flex: 1;
+      padding: 12px 12px;
+      font-size: 15px;
+      font-weight: 800;
+      border: 0;
+      border-radius: 14px;
+      background: #111827;
       color: white;
-      cursor: pointer;
       touch-action: manipulation;
-      transition: all 150ms;
-      text-align: center;
     }
-    
-    .btn:hover:not(:disabled) {
-      background: var(--primary-dark);
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(37,99,235,0.3);
-    }
-    
-    .btn:active:not(:disabled) {
-      transform: translateY(0);
-    }
-    
-    .btn.secondary {
-      background: var(--secondary);
-    }
-    
-    .btn.secondary:hover:not(:disabled) {
-      background: #475569;
-    }
-    
-    .btn.danger {
-      background: var(--danger);
-    }
-    
-    .btn.danger:hover:not(:disabled) {
-      background: #b91c1c;
-    }
-    
-    .btn.success {
-      background: var(--success);
-    }
-    
-    .btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
+    .btn.secondary { background: #4b5563; }
+    .btn.danger { background: #991b1b; }
+    .btn:disabled { opacity: 0.55; }
 
-    /* Form Fields */
-    .form-grid {
+    .grid2 {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 12px;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
     }
 
     .field {
-      background: #f8fafc;
-      border-radius: 12px;
-      padding: 12px;
-      border: 1px solid var(--border);
+      background: #f3f4f6;
+      border-radius: 14px;
+      padding: 10px;
     }
-    
     .field label {
       display: block;
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--secondary);
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-      margin-bottom: 8px;
-    }
-    
-    .field input[type="number"],
-    .field input[type="text"] {
-      width: 100%;
-      font-size: 15px;
-      font-weight: 600;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      outline: none;
-      background: white;
-      transition: border 150ms;
-    }
-    
-    .field input:focus {
-      border-color: var(--primary);
-    }
-    
-    .field .value-display {
-      font-size: 18px;
-      font-weight: 900;
-      color: var(--bg-dark);
-    }
-
-    /* Toggle Switch */
-    .toggle {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: #f8fafc;
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 12px 14px;
-      gap: 12px;
-      margin-bottom: 10px;
-    }
-    
-    .toggle span {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--bg-dark);
-    }
-    
-    .toggle input[type="checkbox"] {
-      width: 48px;
-      height: 28px;
-      appearance: none;
-      background: #cbd5e1;
-      border-radius: 14px;
-      position: relative;
-      cursor: pointer;
-      transition: background 150ms;
-      flex-shrink: 0;
-    }
-    
-    .toggle input[type="checkbox"]:checked {
-      background: var(--primary);
-    }
-    
-    .toggle input[type="checkbox"]::after {
-      content: '';
-      position: absolute;
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      background: white;
-      top: 3px;
-      left: 3px;
-      transition: transform 150ms;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    }
-    
-    .toggle input[type="checkbox"]:checked::after {
-      transform: translateX(20px);
-    }
-
-    /* Status Messages */
-    .status-box {
-      margin-top: 16px;
-      font-size: 13px;
-      color: var(--bg-dark);
-      background: #ecfdf5;
-      border: 1px solid #a7f3d0;
-      padding: 12px;
-      border-radius: 12px;
-      line-height: 1.5;
-    }
-    
-    .status-box.error {
-      background: #fef2f2;
-      border-color: #fecaca;
-      color: var(--danger);
-    }
-    
-    .status-box.warning {
-      background: #fef3c7;
-      border-color: #fcd34d;
-      color: #92400e;
-    }
-
-    .help-text {
-      margin-top: 12px;
       font-size: 12px;
-      color: var(--secondary);
-      line-height: 1.6;
+      color: #374151;
+      margin-bottom: 6px;
+    }
+    .field input[type="number"], .field input[type="text"] {
+      width: 100%;
+      font-size: 16px;
       padding: 10px;
-      background: #f1f5f9;
-      border-radius: 8px;
+      border-radius: 12px;
+      border: 1px solid #d1d5db;
+      outline: none;
+      box-sizing: border-box;
+      background: white;
     }
 
-    /* Crosshair */
+    .toggle {
+      display: flex; align-items: center; justify-content: space-between;
+      background: #f3f4f6;
+      border-radius: 14px;
+      padding: 10px;
+      margin-top: 10px;
+      gap: 12px;
+    }
+    .toggle span { font-size: 13px; color: #111827; font-weight: 700; }
+    .toggle input { transform: scale(1.3); }
+
+    .status {
+      margin-top: 10px;
+      font-size: 12px;
+      color: #111827;
+      background: #eef2ff;
+      border: 1px solid #c7d2fe;
+      padding: 10px;
+      border-radius: 14px;
+      white-space: pre-wrap;
+    }
+    .mini {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #374151;
+      line-height: 1.35;
+    }
+
     .crosshair {
       position: fixed;
       left: 50%;
       top: 50%;
-      width: 40px;
-      height: 40px;
+      width: 36px; height: 36px;
       transform: translate(-50%, -50%);
       z-index: 6000;
       pointer-events: none;
       display: none;
     }
-    
-    .crosshair::before,
-    .crosshair::after {
+    .crosshair:before, .crosshair:after {
       content: "";
       position: absolute;
-      background: rgba(37,99,235,0.9);
-      box-shadow: 0 0 8px rgba(0,0,0,0.4);
+      background: rgba(255,255,255,0.9);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.35);
     }
-    
-    .crosshair::before {
-      left: 50%;
-      top: 0;
-      width: 3px;
-      height: 100%;
-      transform: translateX(-50%);
-    }
-    
-    .crosshair::after {
-      top: 50%;
-      left: 0;
-      height: 3px;
-      width: 100%;
-      transform: translateY(-50%);
-    }
-    
+    .crosshair:before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
+    .crosshair:after  { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
     .crosshair .dot {
       position: absolute;
-      left: 50%;
-      top: 50%;
-      width: 12px;
-      height: 12px;
+      left: 50%; top: 50%;
+      width: 10px; height: 10px;
       border-radius: 999px;
       transform: translate(-50%, -50%);
-      background: white;
-      border: 3px solid var(--primary);
-      box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+      background: rgba(255,255,255,0.95);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.35);
     }
 
-    /* Map Controls */
-    .leaflet-control-zoom a {
-      width: 44px;
-      height: 44px;
-      line-height: 44px;
-      font-size: 20px;
-      border-radius: 10px !important;
-    }
-    
-    .leaflet-control-geocoder {
-      max-width: 70vw;
-      border-radius: 10px !important;
-    }
-
-    /* Grips */
-    .grip {
-      width: 28px;
-      height: 28px;
-      border-radius: 8px;
-      border: 3px solid var(--primary);
-      background: white;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-      cursor: grab;
-      touch-action: none;
-    }
-    
-    .grip:active { cursor: grabbing; }
-    
-    .rot-grip {
-      width: 32px;
-      height: 32px;
-      border-radius: 999px;
-      border: 3px solid #7c3aed;
-      background: white;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-      cursor: grab;
-      touch-action: none;
-      position: relative;
-    }
-    
-    .rot-grip::after {
-      content: "";
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      width: 10px;
-      height: 10px;
-      transform: translate(-50%, -50%);
-      border-radius: 999px;
-      background: #7c3aed;
-    }
-    
-    .rot-grip:active { cursor: grabbing; }
-
-    /* Coordinates Display */
-    .coords-display {
-      background: rgba(15, 23, 42, 0.9);
-      color: white;
-      padding: 8px 14px;
-      border-radius: 8px;
-      font-size: 11px;
-      font-family: 'Courier New', monospace;
-      margin-top: 10px;
-      display: none;
-    }
-    
-    .coords-display.active { display: block; }
-
-    /* Responsive */
-    @media (max-width: 640px) {
-      .btn-grid {
-        grid-template-columns: 1fr 1fr;
-      }
-    }
+    .leaflet-control-zoom a { width: 40px; height: 40px; line-height: 40px; font-size: 18px; }
+    .leaflet-control-geocoder { max-width: 70vw; }
   </style>
 </head>
 
@@ -457,263 +196,67 @@
   <div class="sheet" id="sheet">
     <div class="handle" id="handle" aria-label="Drag to resize"></div>
 
-    <div class="header">
-      <div class="title">OSGB36 Grid + Boundary</div>
-      <div class="status-badge" id="modeBadge">Centre Pick</div>
+    <div class="toprow">
+      <div class="title">OSGB36(15) 3-Point Grid + Boundary → DXF</div>
+      <div class="badge" id="modeBadge">idle</div>
     </div>
 
-    <div class="sheet-content">
-      <!-- Mode Controls -->
-      <div class="section">
-        <div class="section-title">Rectangle Controls</div>
-        <div class="btn-grid">
-          <button class="btn" id="pickCentreBtn">📍 New Rectangle</button>
-          <button class="btn secondary" id="gpsBtn">📡 Go to GPS</button>
-          <button class="btn secondary" id="resetBtn">🔄 Reset All</button>
-        </div>
+    <div class="row">
+      <button class="btn" id="rect3Btn">Define rectangle (3 pts)</button>
+      <button class="btn secondary" id="gpsBtn">Use GPS</button>
+    </div>
+
+    <div class="row">
+      <button class="btn secondary" id="drawBoundaryBtn">Draw boundary</button>
+      <button class="btn secondary" id="finishBoundaryBtn" disabled>Finish boundary</button>
+      <button class="btn danger" id="clearBoundaryBtn" disabled>Clear boundary</button>
+    </div>
+
+    <div class="row">
+      <button class="btn secondary" id="resetBtn">Reset</button>
+      <button class="btn" id="exportBtn" disabled>Export DXF</button>
+    </div>
+
+    <div class="toggle">
+      <span>Use crosshair (pick from screen centre)</span>
+      <input id="useCrosshair" type="checkbox" />
+    </div>
+
+    <div class="toggle">
+      <span>Export relative to P1 (origin)</span>
+      <input id="relativeExport" type="checkbox" />
+    </div>
+
+    <div class="grid2">
+      <div class="field">
+        <label for="gridSpacing">Grid spacing (m)</label>
+        <input id="gridSpacing" type="number" min="0.1" step="0.1" value="10" />
       </div>
-
-      <!-- Boundary Controls -->
-      <div class="section">
-        <div class="section-title">Boundary Drawing</div>
-        <div class="btn-grid">
-          <button class="btn secondary" id="drawBoundaryBtn">✏️ Draw Boundary</button>
-          <button class="btn success" id="finishBoundaryBtn" disabled>✓ Finish</button>
-          <button class="btn danger" id="clearBoundaryBtn" disabled>✗ Clear</button>
-        </div>
+      <div class="field">
+        <label for="layerName">Grid layer (DXF)</label>
+        <input id="layerName" type="text" value="GRID" />
       </div>
-
-      <!-- Options -->
-      <div class="section">
-        <div class="section-title">Options</div>
-        <div class="toggle">
-          <span>🎯 Crosshair mode</span>
-          <input id="useCrosshair" type="checkbox" />
-        </div>
-        <div class="toggle">
-          <span>📐 Export relative to centre</span>
-          <input id="relativeExport" type="checkbox" />
-        </div>
+      <div class="field">
+        <label for="boundaryLayerName">Boundary layer (DXF)</label>
+        <input id="boundaryLayerName" type="text" value="BOUNDARY" />
       </div>
-
-      <!-- Grid Parameters -->
-      <div class="section">
-        <div class="section-title">Grid Parameters</div>
-        <div class="form-grid">
-          <div class="field">
-            <label>Length (m)</label>
-            <input id="gridWidth" type="text" readonly style="background:#e5e7eb;cursor:not-allowed;" value="0" />
-          </div>
-          <div class="field">
-            <label>Width (m)</label>
-            <input id="gridHeight" type="text" readonly style="background:#e5e7eb;cursor:not-allowed;" value="0" />
-          </div>
-          <div class="field">
-            <label for="gridSpacing">Spacing (m)</label>
-            <input id="gridSpacing" type="number" min="0.1" step="0.1" value="10" />
-          </div>
-          <div class="field">
-            <label>Rotation</label>
-            <div class="value-display" id="rotDeg">0.000°</div>
-          </div>
-        </div>
+      <div class="field">
+        <label>Rectangle</label>
+        <div style="font-size:14px;font-weight:900;" id="rectInfo">Not set</div>
       </div>
+    </div>
 
-      <!-- DXF Settings -->
-      <div class="section">
-        <div class="section-title">DXF Export Settings</div>
-        <div class="form-grid">
-          <div class="field">
-            <label for="layerName">Grid Layer</label>
-            <input id="layerName" type="text" value="GRID" />
-          </div>
-          <div class="field">
-            <label for="boundaryLayerName">Boundary Layer</label>
-            <input id="boundaryLayerName" type="text" value="BOUNDARY" />
-          </div>
-        </div>
-      </div>
-
-      <!-- Export Button -->
-      <div class="section">
-        <button class="btn success" id="exportBtn" style="width: 100%; font-size: 16px; padding: 16px;" disabled>
-          📥 Export DXF File
-        </button>
-      </div>
-
-      <!-- Coordinates Display -->
-      <div class="coords-display" id="coordsDisplay"></div>
-
-      <!-- Status -->
-      <div class="status-box" id="statusBox">Initializing...</div>
-
-      <div class="help-text">
-        <strong>Quick Guide:</strong><br>
-        • Search location using top-right search box<br>
-        • Click 3 points to define rectangle:<br>
-        &nbsp;&nbsp;→ Point 1: Starting corner<br>
-        &nbsp;&nbsp;→ Point 2: Sets length & rotation<br>
-        &nbsp;&nbsp;→ Point 3: Sets width (perpendicular)<br>
-        • Draw boundary by clicking points, then finish<br>
-        • Export creates DXF with grid (blue) and boundary (red)
-      </div>
+    <div class="status" id="statusBox">Starting…</div>
+    <div class="mini">
+      Rectangle: tap P1, tap P2 (length + rotation), tap P3 (width). Grid fills that rectangle.
     </div>
   </div>
 
 <script>
-  'use strict';
-
-  // ============================================================================
-  // CONFIGURATION & CONSTANTS
-  // ============================================================================
-  
-  const CONFIG = {
-    OSTN15_URL: 'https://cdn.proj.org/uk_os_OSTN15_NTv2_OSGBtoETRS.tif',
-    EPSG27700_BASE: '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 ' +
-                    '+x_0=400000 +y_0=-100000 +ellps=airy +units=m +no_defs +type=crs',
-    DXF_COLORS: { GRID: 5, BOUNDARY: 1 }, // AutoCAD color indices
-    DEFAULT_ZOOM: 13,
-    GPS_TIMEOUT: 15000,
-    TRUE_NORTH_DELTA_LAT: 0.00015 // ~17m for north vector calculation
-  };
-
-  const MODES = {
-    RECTANGLE: 'rectangle',
-    BOUNDARY: 'boundary'
-  };
-
-  // ============================================================================
-  // STATE MANAGEMENT
-  // ============================================================================
-  
-  class AppState {
-    constructor() {
-      this.mode = MODES.RECTANGLE;
-      this.rectPt1 = null; // First point (corner)
-      this.rectPt2 = null; // Second point (defines length and angle)
-      this.rectPt3 = null; // Third point (defines width)
-      this.boundaryLatLngs = [];
-      this.ostnReady = false;
-    }
-
-    reset() {
-      this.rectPt1 = null;
-      this.rectPt2 = null;
-      this.rectPt3 = null;
-      this.boundaryLatLngs = [];
-      this.mode = MODES.RECTANGLE;
-    }
-
-    setMode(newMode) {
-      this.mode = newMode;
-      UI.updateModeBadge(newMode);
-    }
-
-    addBoundaryPoint(latlng) {
-      this.boundaryLatLngs.push(latlng);
-    }
-
-    clearBoundary() {
-      this.boundaryLatLngs = [];
-    }
-
-    clearRectangle() {
-      this.rectPt1 = null;
-      this.rectPt2 = null;
-      this.rectPt3 = null;
-    }
-
-    get hasRectangle() {
-      return this.rectPt1 && this.rectPt2 && this.rectPt3;
-    }
-
-    get rectangleDimensions() {
-      if (!this.hasRectangle) return null;
-
-      const p1 = Transforms.latLngToEN(this.rectPt1);
-      const p2 = Transforms.latLngToEN(this.rectPt2);
-      const p3 = Transforms.latLngToEN(this.rectPt3);
-
-      // Length is distance from p1 to p2
-      const length = Math.sqrt(Math.pow(p2.e - p1.e, 2) + Math.pow(p2.n - p1.n, 2));
-
-      // Angle from p1 to p2
-      const angleFromEast = Math.atan2(p2.n - p1.n, p2.e - p1.e);
-      const rotation = angleFromEast - (Math.PI / 2); // Convert to rotation from north
-
-      // Width is perpendicular distance from p3 to the line p1-p2
-      const dx = p2.e - p1.e;
-      const dy = p2.n - p1.n;
-      const lengthSq = dx * dx + dy * dy;
-      
-      // Project p3 onto the line p1-p2
-      const t = ((p3.e - p1.e) * dx + (p3.n - p1.n) * dy) / lengthSq;
-      const projE = p1.e + t * dx;
-      const projN = p1.n + t * dy;
-      
-      // Width is distance from p3 to projection
-      const width = Math.sqrt(Math.pow(p3.e - projE, 2) + Math.pow(p3.n - projN, 2));
-
-      // Centre is midpoint of the rectangle
-      const centreE = p1.e + dx / 2 + (p3.e - projE) / 2;
-      const centreN = p1.n + dy / 2 + (p3.n - projN) / 2;
-
-      return { length, width, rotation, centreE, centreN };
-    }
-
-    get rotationDegrees() {
-      const dims = this.rectangleDimensions;
-      return dims ? (dims.rotation * 180 / Math.PI) : 0;
-    }
-  }
-
-  const state = new AppState();
-
-  // ============================================================================
-  // DOM REFERENCES
-  // ============================================================================
-  
-  const DOM = {
-    // Controls
-    pickCentreBtn: document.getElementById('pickCentreBtn'),
-    gpsBtn: document.getElementById('gpsBtn'),
-    resetBtn: document.getElementById('resetBtn'),
-    exportBtn: document.getElementById('exportBtn'),
-    
-    // Boundary
-    drawBoundaryBtn: document.getElementById('drawBoundaryBtn'),
-    finishBoundaryBtn: document.getElementById('finishBoundaryBtn'),
-    clearBoundaryBtn: document.getElementById('clearBoundaryBtn'),
-    
-    // Toggles
-    useCrosshair: document.getElementById('useCrosshair'),
-    relativeExport: document.getElementById('relativeExport'),
-    
-    // Inputs
-    gridWidth: document.getElementById('gridWidth'),
-    gridHeight: document.getElementById('gridHeight'),
-    gridSpacing: document.getElementById('gridSpacing'),
-    layerName: document.getElementById('layerName'),
-    boundaryLayerName: document.getElementById('boundaryLayerName'),
-    
-    // Display
-    modeBadge: document.getElementById('modeBadge'),
-    rotDeg: document.getElementById('rotDeg'),
-    statusBox: document.getElementById('statusBox'),
-    crosshair: document.getElementById('crosshair'),
-    coordsDisplay: document.getElementById('coordsDisplay'),
-    
-    // Sheet
-    sheet: document.getElementById('sheet'),
-    handle: document.getElementById('handle')
-  };
-
-  // ============================================================================
-  // MAP SETUP
-  // ============================================================================
-  
-  const map = L.map('map', { zoomControl: true })
-    .setView([52.2, 0.9], CONFIG.DEFAULT_ZOOM);
+  // ---------------------------
+  // Map setup (Satellite)
+  // ---------------------------
+  const map = L.map('map', { zoomControl: true }).setView([52.2, 0.9], 13);
 
   L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -721,792 +264,547 @@
   ).addTo(map);
 
   const geocodeControl = L.Control.geocoder({ defaultMarkGeocode: false }).addTo(map);
-  geocodeControl.on('markgeocode', (e) => {
-    map.fitBounds(e.geocode.bbox);
+  geocodeControl.on('markgeocode', (e) => map.fitBounds(e.geocode.bbox));
+
+  // ---------------------------
+  // DOM refs
+  // ---------------------------
+  const statusBox = document.getElementById('statusBox');
+  const exportBtn = document.getElementById('exportBtn');
+  const modeBadge = document.getElementById('modeBadge');
+
+  window.addEventListener('error', (ev) => {
+    statusBox.textContent = 'JS error: ' + (ev.message || ev.error || 'unknown');
   });
 
-  // Map layers
-  const layers = {
-    grid: L.layerGroup().addTo(map),
-    rectangleMarkers: L.layerGroup().addTo(map),
-    rectanglePreview: null,
-    boundaryPoints: L.layerGroup().addTo(map),
-    boundaryLine: null,
-    gpsAccuracy: null
-  };
+  // ---------------------------
+  // OSGB36(15) / OSTN15
+  // ---------------------------
+  const OSTN15_TIFF_URL = 'https://cdn.proj.org/uk_os_OSTN15_NTv2_OSGBtoETRS.tif';
+  const EPSG27700_DEF_BASE =
+    '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 ' +
+    '+x_0=400000 +y_0=-100000 +ellps=airy +units=m +no_defs +type=crs';
 
-  // ============================================================================
-  // COORDINATE TRANSFORMS
-  // ============================================================================
-  
   proj4.defs('EPSG:4326', '+proj=longlat +datum=WGS84 +no_defs +type=crs');
+  let ostnReady = false;
 
-  const Transforms = {
-    latLngToEN(latlng) {
-      const out = proj4('EPSG:4326', 'EPSG:27700', [latlng.lng, latlng.lat]);
-      return { e: out[0], n: out[1] };
-    },
-
-    enToLatLng(e, n) {
-      const out = proj4('EPSG:27700', 'EPSG:4326', [e, n]);
-      return L.latLng(out[1], out[0]);
-    },
-
-    rotatePoint(e, n, centreE, centreN, angle) {
-      const dE = e - centreE;
-      const dN = n - centreN;
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-      return {
-        e: centreE + dE * cos - dN * sin,
-        n: centreN + dE * sin + dN * cos
-      };
-    },
-
-    rotateVector(e, n, angle) {
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-      return {
-        e: e * cos - n * sin,
-        n: e * sin + n * cos
-      };
-    },
-
-    calculateTrueNorthRotation(latlng) {
-      const p0 = this.latLngToEN(latlng);
-      const pN = this.latLngToEN(
-        L.latLng(latlng.lat + CONFIG.TRUE_NORTH_DELTA_LAT, latlng.lng)
-      );
-      const dE = pN.e - p0.e;
-      const dN = pN.n - p0.n;
-      const angleFromEast = Math.atan2(dN, dE);
-      return angleFromEast - (Math.PI / 2);
-    }
-  };
-
-  // ============================================================================
-  // GRID GENERATION
-  // ============================================================================
-  
-  const GridGenerator = {
-    generateLines(centreEN, width, height, spacing, rotation) {
-      const halfW = width / 2;
-      const halfH = height / 2;
-
-      const stepsX = Math.max(1, Math.round(width / spacing));
-      const stepsY = Math.max(1, Math.round(height / spacing));
-      const stepX = width / stepsX;
-      const stepY = height / stepsY;
-
-      const lines = [];
-
-      // Vertical lines
-      for (let i = 0; i <= stepsX; i++) {
-        const x = -halfW + i * stepX;
-        const p1 = Transforms.rotatePoint(
-          centreEN.e + x, centreEN.n - halfH,
-          centreEN.e, centreEN.n, rotation
-        );
-        const p2 = Transforms.rotatePoint(
-          centreEN.e + x, centreEN.n + halfH,
-          centreEN.e, centreEN.n, rotation
-        );
-        lines.push({ e1: p1.e, n1: p1.n, e2: p2.e, n2: p2.n });
-      }
-
-      // Horizontal lines
-      for (let j = 0; j <= stepsY; j++) {
-        const y = -halfH + j * stepY;
-        const p1 = Transforms.rotatePoint(
-          centreEN.e - halfW, centreEN.n + y,
-          centreEN.e, centreEN.n, rotation
-        );
-        const p2 = Transforms.rotatePoint(
-          centreEN.e + halfW, centreEN.n + y,
-          centreEN.e, centreEN.n, rotation
-        );
-        lines.push({ e1: p1.e, n1: p1.n, e2: p2.e, n2: p2.n });
-      }
-
-      return lines;
-    }
-  };
-
-  // ============================================================================
-  // DXF EXPORT
-  // ============================================================================
-  
-  const DXFExporter = {
-    createLineEntity(x1, y1, x2, y2, layer, color) {
-      return [
-        "0", "LINE",
-        "8", layer,
-        "62", String(color),
-        "10", x1.toFixed(3),
-        "20", y1.toFixed(3),
-        "30", "0.000",
-        "11", x2.toFixed(3),
-        "21", y2.toFixed(3),
-        "31", "0.000"
-      ].join("\n") + "\n";
-    },
-
-    createPolyline(points, layer, color, closed = false) {
-      let dxf = "0\nLWPOLYLINE\n";
-      dxf += `8\n${layer}\n`;
-      dxf += `62\n${color}\n`;
-      dxf += `90\n${points.length}\n`;
-      dxf += `70\n${closed ? 1 : 0}\n`;
-      
-      for (const p of points) {
-        dxf += `10\n${p.x.toFixed(3)}\n`;
-        dxf += `20\n${p.y.toFixed(3)}\n`;
-      }
-      
-      return dxf;
-    },
-
-    export() {
-      if (!state.hasRectangle) {
-        UI.showError("Please define rectangle by picking 3 points first");
-        return;
-      }
-
-      const dims = state.rectangleDimensions;
-      const spacing = parseFloat(DOM.gridSpacing.value);
-
-      if (!(spacing > 0)) {
-        UI.showError("Grid spacing must be greater than 0");
-        return;
-      }
-
-      const gridLayer = (DOM.layerName.value || "GRID").trim();
-      const boundaryLayer = (DOM.boundaryLayerName.value || "BOUNDARY").trim();
-      const relative = DOM.relativeExport.checked;
-
-      const centre = { e: dims.centreE, n: dims.centreN };
-      const linesEN = GridGenerator.generateLines(
-        centre, dims.length, dims.width, spacing, dims.rotation
-      );
-
-      // Convert to DXF coordinates
-      const lines = linesEN.map(l => relative ? {
-        x1: l.e1 - centre.e, y1: l.n1 - centre.n,
-        x2: l.e2 - centre.e, y2: l.n2 - centre.n
-      } : {
-        x1: l.e1, y1: l.n1,
-        x2: l.e2, y2: l.n2
-      });
-
-      // Convert boundary
-      let boundaryPoints = null;
-      if (state.boundaryLatLngs.length >= 2) {
-        boundaryPoints = state.boundaryLatLngs.map(ll => {
-          const en = Transforms.latLngToEN(ll);
-          return relative ? 
-            { x: en.e - centre.e, y: en.n - centre.n } :
-            { x: en.e, y: en.n };
-        });
-      }
-
-      // Build DXF
-      let dxf = "0\nSECTION\n2\nHEADER\n";
-      dxf += "9\n$INSUNITS\n70\n6\n"; // Meters
-      dxf += "0\nENDSEC\n";
-      dxf += "0\nSECTION\n2\nENTITIES\n";
-
-      // Add grid lines
-      for (const ln of lines) {
-        dxf += this.createLineEntity(
-          ln.x1, ln.y1, ln.x2, ln.y2,
-          gridLayer, CONFIG.DXF_COLORS.GRID
-        );
-      }
-
-      // Add boundary
-      if (boundaryPoints) {
-        dxf += this.createPolyline(
-          boundaryPoints, boundaryLayer,
-          CONFIG.DXF_COLORS.BOUNDARY, false
-        );
-      }
-
-      dxf += "0\nENDSEC\n0\nEOF\n";
-
-      // Download
-      const blob = new Blob([dxf], { type: "application/dxf" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      
-      const deg = (dims.rotation * 180 / Math.PI).toFixed(1);
-      const coords = relative ? "REL" : "OSGB";
-      a.download = `grid_${coords}_${dims.length.toFixed(0)}x${dims.width.toFixed(0)}_${spacing}m_${deg}deg.dxf`;
-      a.href = url;
-      a.style.display = "none";
-      
-      document.body.appendChild(a);
-      a.click();
-      
-      setTimeout(() => {
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }, 100);
-
-      UI.showSuccess("DXF exported successfully!");
-    }
-  };
-
-  // ============================================================================
-  // UI MANAGEMENT
-  // ============================================================================
-  
-  const UI = {
-    updateModeBadge(mode) {
-      if (mode === MODES.RECTANGLE) {
-        if (!state.rectPt1) {
-          DOM.modeBadge.textContent = 'Pick Point 1 (corner)';
-        } else if (!state.rectPt2) {
-          DOM.modeBadge.textContent = 'Pick Point 2 (length)';
-        } else if (!state.rectPt3) {
-          DOM.modeBadge.textContent = 'Pick Point 3 (width)';
-        } else {
-          DOM.modeBadge.textContent = 'Rectangle Complete';
-        }
-        DOM.modeBadge.className = 'status-badge';
-      } else if (mode === MODES.BOUNDARY) {
-        DOM.modeBadge.textContent = 'Boundary Draw';
-        DOM.modeBadge.className = 'status-badge mode-boundary';
-      }
-    },
-
-    updateRotationDisplay() {
-      DOM.rotDeg.textContent = state.rotationDegrees.toFixed(3) + '°';
-    },
-
-    updateDimensionsDisplay() {
-      const dims = state.rectangleDimensions;
-      if (dims) {
-        DOM.gridWidth.value = Math.round(dims.length);
-        DOM.gridHeight.value = Math.round(dims.width);
-      }
-    },
-
-    updateCoordinatesDisplay(latlng) {
-      if (!latlng) {
-        DOM.coordsDisplay.classList.remove('active');
-        return;
-      }
-
-      const en = Transforms.latLngToEN(latlng);
-      DOM.coordsDisplay.classList.add('active');
-      DOM.coordsDisplay.textContent = 
-        `E: ${en.e.toFixed(2)}m  N: ${en.n.toFixed(2)}m  ` +
-        `Lat: ${latlng.lat.toFixed(6)}°  Lng: ${latlng.lng.toFixed(6)}°`;
-    },
-
-    showStatus(message, type = 'success') {
-      DOM.statusBox.textContent = message;
-      DOM.statusBox.className = 'status-box';
-      if (type === 'error') DOM.statusBox.classList.add('error');
-      if (type === 'warning') DOM.statusBox.classList.add('warning');
-    },
-
-    showSuccess(message) {
-      this.showStatus(message, 'success');
-    },
-
-    showError(message) {
-      this.showStatus(message, 'error');
-      alert(message);
-    },
-
-    showWarning(message) {
-      this.showStatus(message, 'warning');
-    },
-
-    updateBoundaryButtons() {
-      const hasPoints = state.boundaryLatLngs.length > 0;
-      const canFinish = state.boundaryLatLngs.length >= 2;
-      
-      DOM.finishBoundaryBtn.disabled = !canFinish;
-      DOM.clearBoundaryBtn.disabled = !hasPoints;
-      
-      if (state.mode === MODES.BOUNDARY) {
-        DOM.drawBoundaryBtn.textContent = '✏️ Drawing... (click map)';
-      } else {
-        DOM.drawBoundaryBtn.textContent = '✏️ Draw Boundary';
-      }
-    },
-
-    updateExportButton() {
-      DOM.exportBtn.disabled = !state.hasRectangle;
-    }
-  };
-
-  // ============================================================================
-  // RENDERING
-  // ============================================================================
-  
-  const Renderer = {
-    clearAll() {
-      layers.grid.clearLayers();
-      layers.rectangleMarkers.clearLayers();
-      layers.boundaryPoints.clearLayers();
-      if (layers.rectanglePreview) {
-        layers.rectanglePreview.remove();
-        layers.rectanglePreview = null;
-      }
-      if (layers.boundaryLine) {
-        layers.boundaryLine.remove();
-        layers.boundaryLine = null;
-      }
-    },
-
-    redrawRectangleMarkers() {
-      layers.rectangleMarkers.clearLayers();
-      if (layers.rectanglePreview) {
-        layers.rectanglePreview.remove();
-        layers.rectanglePreview = null;
-      }
-
-      const points = [state.rectPt1, state.rectPt2, state.rectPt3].filter(p => p);
-      
-      points.forEach((pt, idx) => {
-        const color = idx === 0 ? '#2563eb' : idx === 1 ? '#7c3aed' : '#16a34a';
-        const label = idx === 0 ? '1' : idx === 1 ? '2' : '3';
-        
-        L.circleMarker(pt, {
-          radius: 10,
-          color: color,
-          weight: 3,
-          opacity: 0.9,
-          fillColor: 'white',
-          fillOpacity: 0.9
-        }).addTo(layers.rectangleMarkers);
-
-        // Add number label
-        L.marker(pt, {
-          icon: L.divIcon({
-            className: '',
-            html: `<div style="background:${color};color:white;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.3);">${label}</div>`,
-            iconSize: [24, 24],
-            iconAnchor: [12, 12]
-          })
-        }).addTo(layers.rectangleMarkers);
-      });
-
-      // Draw preview lines
-      if (state.rectPt1 && state.rectPt2) {
-        const line = L.polyline([state.rectPt1, state.rectPt2], {
-          color: '#7c3aed',
-          weight: 3,
-          opacity: 0.7,
-          dashArray: '5, 10'
-        }).addTo(layers.rectangleMarkers);
-      }
-
-      if (state.rectPt2 && state.rectPt3) {
-        // Draw perpendicular guide
-        const p1 = Transforms.latLngToEN(state.rectPt1);
-        const p2 = Transforms.latLngToEN(state.rectPt2);
-        const p3 = Transforms.latLngToEN(state.rectPt3);
-
-        // Find projection of p3 onto line p1-p2
-        const dx = p2.e - p1.e;
-        const dy = p2.n - p1.n;
-        const lengthSq = dx * dx + dy * dy;
-        const t = ((p3.e - p1.e) * dx + (p3.n - p1.n) * dy) / lengthSq;
-        const projE = p1.e + t * dx;
-        const projN = p1.n + t * dy;
-        const projLL = Transforms.enToLatLng(projE, projN);
-
-        L.polyline([state.rectPt3, projLL], {
-          color: '#16a34a',
-          weight: 2,
-          opacity: 0.7,
-          dashArray: '5, 5'
-        }).addTo(layers.rectangleMarkers);
-      }
-
-      // Draw full rectangle if all points set
-      if (state.hasRectangle) {
-        const dims = state.rectangleDimensions;
-        const centre = { e: dims.centreE, n: dims.centreN };
-        
-        // Calculate 4 corners
-        const halfL = dims.length / 2;
-        const halfW = dims.width / 2;
-        const corners = [
-          { x: -halfL, y: -halfW },
-          { x: halfL, y: -halfW },
-          { x: halfL, y: halfW },
-          { x: -halfL, y: halfW }
-        ];
-
-        const cornerLatLngs = corners.map(c => {
-          const p = Transforms.rotatePoint(
-            centre.e + c.x,
-            centre.n + c.y,
-            centre.e, centre.n,
-            dims.rotation
-          );
-          return Transforms.enToLatLng(p.e, p.n);
-        });
-
-        cornerLatLngs.push(cornerLatLngs[0]); // Close the rectangle
-
-        layers.rectanglePreview = L.polyline(cornerLatLngs, {
-          color: '#2563eb',
-          weight: 3,
-          opacity: 0.8
-        }).addTo(map);
-      }
-    },
-
-    redrawGrid() {
-      layers.grid.clearLayers();
-      
-      if (!state.hasRectangle) return;
-
-      const dims = state.rectangleDimensions;
-      const spacing = parseFloat(DOM.gridSpacing.value);
-
-      if (!(spacing > 0)) return;
-
-      const centre = { e: dims.centreE, n: dims.centreN };
-      const lines = GridGenerator.generateLines(
-        centre, dims.length, dims.width, spacing, dims.rotation
-      );
-
-      for (const ln of lines) {
-        const a = Transforms.enToLatLng(ln.e1, ln.n1);
-        const b = Transforms.enToLatLng(ln.e2, ln.n2);
-        L.polyline([a, b], {
-          color: '#2563eb',
-          weight: 2,
-          opacity: 0.8
-        }).addTo(layers.grid);
-      }
-    },
-
-    redrawBoundary() {
-      layers.boundaryPoints.clearLayers();
-      if (layers.boundaryLine) {
-        layers.boundaryLine.remove();
-        layers.boundaryLine = null;
-      }
-
-      if (state.boundaryLatLngs.length === 0) return;
-
-      layers.boundaryLine = L.polyline(state.boundaryLatLngs, {
-        color: '#dc2626',
-        weight: 3,
-        opacity: 0.9
-      }).addTo(map);
-
-      state.boundaryLatLngs.forEach(ll => {
-        L.circleMarker(ll, {
-          radius: 6,
-          color: '#dc2626',
-          weight: 3,
-          opacity: 0.9,
-          fillColor: 'white',
-          fillOpacity: 0.9
-        }).addTo(layers.boundaryPoints);
-      });
-    },
-
-    redrawAll() {
-      this.redrawRectangleMarkers();
-      this.redrawGrid();
-      this.redrawBoundary();
-      UI.updateRotationDisplay();
-      UI.updateDimensionsDisplay();
-      UI.updateBoundaryButtons();
-      UI.updateExportButton();
-      UI.updateModeBadge(state.mode);
-    }
-  };
-
-  // ============================================================================
-  // MAP INTERACTIONS
-  // ============================================================================
-  
-  const MapInteraction = {
-    getCrosshairOrClick(clickLatLng) {
-      return DOM.useCrosshair.checked ? map.getCenter() : clickLatLng;
-    },
-
-    handleMapClick(e) {
-      const latlng = this.getCrosshairOrClick(e.latlng);
-
-      switch (state.mode) {
-        case MODES.BOUNDARY:
-          state.addBoundaryPoint(latlng);
-          Renderer.redrawBoundary();
-          UI.updateBoundaryButtons();
-          break;
-
-        case MODES.RECTANGLE:
-          this.handleRectangleClick(latlng);
-          break;
-      }
-    },
-
-    handleRectangleClick(latlng) {
-      if (!state.rectPt1) {
-        state.rectPt1 = latlng;
-        UI.showStatus('Point 1 set. Click for Point 2 to set length and angle');
-        Renderer.redrawAll();
-      } else if (!state.rectPt2) {
-        state.rectPt2 = latlng;
-        UI.showStatus('Point 2 set. Click for Point 3 to set width');
-        Renderer.redrawAll();
-      } else if (!state.rectPt3) {
-        state.rectPt3 = latlng;
-        const dims = state.rectangleDimensions;
-        UI.showSuccess(
-          `Rectangle complete! ${dims.length.toFixed(1)}m × ${dims.width.toFixed(1)}m ` +
-          `at ${dims.rotation.toFixed(1)}°`
-        );
-        Renderer.redrawAll();
-      }
-    }
-  };
-
-  // ============================================================================
-  // EVENT HANDLERS
-  // ============================================================================
-  
-  // Map events
-  map.on('click', (e) => MapInteraction.handleMapClick(e));
-
-  map.on('mousemove', (e) => {
-    if (DOM.useCrosshair.checked) {
-      UI.updateCoordinatesDisplay(e.latlng);
-    }
-  });
-
-  map.on('locationfound', (e) => {
-    // Just center the map on GPS location
-    map.setView(e.latlng, 18);
-    
-    if (layers.gpsAccuracy) layers.gpsAccuracy.remove();
-    layers.gpsAccuracy = L.circle(e.latlng, {
-      radius: e.accuracy,
-      color: '#16a34a',
-      weight: 2,
-      opacity: 0.6,
-      fillOpacity: 0.1
-    }).addTo(map);
-
-    UI.showSuccess('GPS location found. Click map to pick rectangle points.');
-  });
-
-  map.on('locationerror', (e) => {
-    UI.showError('GPS location failed: ' + (e.message || 'Permission denied'));
-  });
-
-  // Button events
-  DOM.pickCentreBtn.addEventListener('click', () => {
-    state.setMode(MODES.RECTANGLE);
-    state.clearRectangle();
-    Renderer.redrawAll();
-    UI.showStatus('Click 3 points: (1) corner, (2) length, (3) width');
-  });
-
-  DOM.gpsBtn.addEventListener('click', () => {
-    UI.showStatus('Getting GPS location...');
-    map.locate({
-      setView: true,
-      maxZoom: 18,
-      enableHighAccuracy: true,
-      timeout: CONFIG.GPS_TIMEOUT
-    });
-  });
-
-  DOM.resetBtn.addEventListener('click', () => {
-    if (!confirm('Reset all? This will clear rectangle and boundary.')) return;
-
-    state.reset();
-    
-    if (layers.gpsAccuracy) {
-      layers.gpsAccuracy.remove();
-      layers.gpsAccuracy = null;
-    }
-
-    Renderer.clearAll();
-    Renderer.redrawAll();
-    UI.updateCoordinatesDisplay(null);
-    UI.showStatus('Reset complete. Click map to start defining rectangle.');
-  });
-
-  DOM.drawBoundaryBtn.addEventListener('click', () => {
-    state.setMode(MODES.BOUNDARY);
-    UI.showStatus('Click points on map to draw boundary');
-  });
-
-  DOM.finishBoundaryBtn.addEventListener('click', () => {
-    state.setMode(MODES.RECTANGLE);
-    UI.showSuccess(`Boundary complete with ${state.boundaryLatLngs.length} points`);
-  });
-
-  DOM.clearBoundaryBtn.addEventListener('click', () => {
-    if (!confirm('Clear boundary?')) return;
-    
-    state.clearBoundary();
-    Renderer.redrawBoundary();
-    UI.updateBoundaryButtons();
-    state.setMode(MODES.RECTANGLE);
-    UI.showStatus('Boundary cleared');
-  });
-
-  DOM.exportBtn.addEventListener('click', () => DXFExporter.export());
-
-  // Input events
-  DOM.gridSpacing.addEventListener('input', () => Renderer.redrawAll());
-
-  DOM.useCrosshair.addEventListener('change', () => {
-    DOM.crosshair.style.display = DOM.useCrosshair.checked ? 'block' : 'none';
-    if (DOM.useCrosshair.checked) {
-      UI.showStatus('Crosshair mode active - map centre will be used');
-    }
-  });
-
-  // ============================================================================
-  // BOTTOM SHEET INTERACTION
-  // ============================================================================
-  
-  const Sheet = {
-    snaps: { open: 8, half: 48, closed: 70 },
-    current: 'half',
-    dragging: false,
-    startY: 0,
-    startVh: 48,
-
-    init() {
-      this.setSnap('half');
-      
-      DOM.handle.addEventListener('click', () => {
-        this.setSnap(this.current === 'closed' ? 'half' : 'closed');
-      });
-
-      DOM.handle.addEventListener('pointerdown', (e) => {
-        this.dragging = true;
-        DOM.handle.setPointerCapture(e.pointerId);
-        DOM.sheet.style.transition = 'none';
-        this.startY = e.clientY;
-        this.startVh = this.getCurrentVh();
-      });
-
-      DOM.handle.addEventListener('pointermove', (e) => {
-        if (!this.dragging) return;
-
-        const dyPx = e.clientY - this.startY;
-        const vhPx = window.innerHeight / 100;
-        const dyVh = dyPx / vhPx;
-        const nextVh = Math.max(0, Math.min(75, this.startVh + dyVh));
-        
-        DOM.sheet.style.transform = `translateY(${nextVh}vh)`;
-      });
-
-      DOM.handle.addEventListener('pointerup', () => {
-        if (!this.dragging) return;
-        this.dragging = false;
-        DOM.sheet.style.transition = 'transform 220ms cubic-bezier(0.4, 0, 0.2, 1)';
-
-        const currentVh = this.getCurrentVh();
-        const snapEntries = Object.entries(this.snaps);
-        let closest = snapEntries[0];
-        
-        for (const entry of snapEntries) {
-          if (Math.abs(entry[1] - currentVh) < Math.abs(closest[1] - currentVh)) {
-            closest = entry;
-          }
-        }
-        
-        this.setSnap(closest[0]);
-      });
-    },
-
-    setSnap(snap) {
-      this.current = snap;
-      DOM.sheet.style.transform = `translateY(${this.snaps[snap]}vh)`;
-      DOM.sheet.classList.toggle('is-collapsed', snap === 'closed');
-    },
-
-    getCurrentVh() {
-      const match = DOM.sheet.style.transform.match(/translateY\(([-0-9.]+)vh\)/);
-      return match ? parseFloat(match[1]) : this.snaps.half;
-    }
-  };
-
-  Sheet.init();
-
-  // ============================================================================
-  // OSTN15 INITIALIZATION
-  // ============================================================================
-  
-  async function initializeOSTN15() {
+  async function loadOSTN15() {
     try {
-      UI.showStatus('Loading OSTN15 grid shift (requires internet)...');
-      
-      const tiff = await GeoTIFF.fromUrl(CONFIG.OSTN15_URL);
+      statusBox.textContent = 'Loading OSTN15 grid (needs internet)…';
+      const tiff = await GeoTIFF.fromUrl(OSTN15_TIFF_URL);
       await proj4.nadgrid('OSTN15_NTv2_OSGBtoETRS', tiff).ready;
-
-      proj4.defs('EPSG:27700', CONFIG.EPSG27700_BASE + ' +nadgrids=OSTN15_NTv2_OSGBtoETRS');
-      state.ostnReady = true;
-      
-      UI.showSuccess('✓ OSTN15 loaded - OSGB36(15) coordinate system ready');
-
-      Renderer.redrawAll();
-    } catch (error) {
-      console.error('OSTN15 load failed:', error);
-      
-      UI.showWarning(
-        '⚠ OSTN15 unavailable - using fallback transformation (±5m accuracy). ' +
-        'Host via HTTPS for survey-grade accuracy.'
-      );
-      
+      proj4.defs('EPSG:27700', EPSG27700_DEF_BASE + ' +nadgrids=OSTN15_NTv2_OSGBtoETRS');
+      ostnReady = true;
+      statusBox.textContent = 'OSTN15 loaded ✅ (OSGB36(15) accurate)';
+      exportBtn.disabled = false;
+    } catch (e) {
+      console.error(e);
+      statusBox.textContent = 'OSTN15 failed ⚠️ Using fallback (not survey-grade). Host via HTTPS.';
       proj4.defs(
         'EPSG:27700',
-        CONFIG.EPSG27700_BASE +
-        ' +towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489'
+        '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 ' +
+        '+x_0=400000 +y_0=-100000 +ellps=airy ' +
+        '+towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 ' +
+        '+units=m +no_defs +type=crs'
       );
-      
-      state.ostnReady = false;
+      ostnReady = false;
+      exportBtn.disabled = false;
     }
   }
 
-  // ============================================================================
-  // ERROR HANDLING
-  // ============================================================================
-  
-  window.addEventListener('error', (event) => {
-    console.error('Runtime error:', event.error);
-    UI.showError('Error: ' + (event.message || 'Unknown error occurred'));
+  // ---------------------------
+  // Helpers
+  // ---------------------------
+  const useCrosshairEl = document.getElementById('useCrosshair');
+  const crosshairEl = document.getElementById('crosshair');
+  const gridSpacingEl = document.getElementById('gridSpacing');
+  const layerNameEl = document.getElementById('layerName');
+  const boundaryLayerNameEl = document.getElementById('boundaryLayerName');
+  const relativeExportEl = document.getElementById('relativeExport');
+  const rectInfoEl = document.getElementById('rectInfo');
+
+  function crosshairLatLng() { return map.getCenter(); }
+  function getPickLatLng(tapLatLng) { return useCrosshairEl.checked ? crosshairLatLng() : tapLatLng; }
+
+  function latLngToEN(latlng) {
+    const out = proj4('EPSG:4326', 'EPSG:27700', [latlng.lng, latlng.lat]);
+    return { e: out[0], n: out[1] };
+  }
+  function enToLatLng(e, n) {
+    const out = proj4('EPSG:27700', 'EPSG:4326', [e, n]);
+    return L.latLng(out[1], out[0]);
+  }
+
+  function hypot2(de, dn) { return Math.sqrt(de*de + dn*dn); }
+
+  // ---------------------------
+  // Layers
+  // ---------------------------
+  const gridLayer = L.layerGroup().addTo(map);
+  const rectLayer = L.layerGroup().addTo(map);
+  const pickLayer = L.layerGroup().addTo(map);
+
+  // Boundary
+  const boundaryPointsLayer = L.layerGroup().addTo(map);
+  let boundaryLatLngs = [];
+  let boundaryPreviewLine = null;
+
+  // ---------------------------
+  // Modes / rectangle state
+  // ---------------------------
+  let mode = 'idle'; // idle | rect3 | boundary
+
+  // 3-point rectangle in EN
+  let rectP1 = null; // {e,n}
+  let rectP2 = null;
+  let rectP3 = null;
+
+  // derived
+  let rectLen = 0;
+  let rectWid = 0;
+  let rectU = null; // unit along length {e,n}
+  let rectW = null; // unit perp (to the chosen side) {e,n}
+  let rectCornersEN = null; // array of 4 EN corners in order
+
+  function setMode(m) {
+    mode = m;
+    modeBadge.textContent = m === 'rect3' ? 'pick P1' :
+                            m === 'boundary' ? 'boundary draw' : 'idle';
+  }
+
+  function clearRectangle() {
+    rectP1 = rectP2 = rectP3 = null;
+    rectLen = rectWid = 0;
+    rectU = rectW = null;
+    rectCornersEN = null;
+    rectInfoEl.textContent = 'Not set';
+    rectLayer.clearLayers();
+    gridLayer.clearLayers();
+    pickLayer.clearLayers();
+  }
+
+  function drawPickPoint(latlng, label) {
+    const m = L.circleMarker(latlng, { radius: 8, weight: 2, opacity: 0.95, fillOpacity: 0.25 }).addTo(pickLayer);
+    m.bindTooltip(label, { permanent: true, direction: 'top', offset: [0,-8] });
+  }
+
+  function computeRectangleFrom3Pts(p1, p2, p3) {
+    // p1,p2,p3 are EN objects
+    const vE = p2.e - p1.e;
+    const vN = p2.n - p1.n;
+    const L = hypot2(vE, vN);
+    if (L < 0.001) return null;
+
+    const u = { e: vE / L, n: vN / L };            // along baseline
+    const w0 = { e: -u.n, n: u.e };                // left perp
+    const dE3 = p3.e - p1.e;
+    const dN3 = p3.n - p1.n;
+    const widthSigned = dE3 * w0.e + dN3 * w0.n;   // projection onto perp
+    const W = Math.abs(widthSigned);
+    if (W < 0.001) return null;
+
+    // choose side so width is positive in rect local coords
+    const w = widthSigned >= 0 ? w0 : { e: -w0.e, n: -w0.n };
+
+    // corners: p1, p2, p2 + w*W, p1 + w*W
+    const c1 = { e: p1.e, n: p1.n };
+    const c2 = { e: p2.e, n: p2.n };
+    const c3 = { e: p2.e + w.e * W, n: p2.n + w.n * W };
+    const c4 = { e: p1.e + w.e * W, n: p1.n + w.n * W };
+
+    return { L, W, u, w, corners: [c1, c2, c3, c4] };
+  }
+
+  function redrawRectangleAndGrid() {
+    rectLayer.clearLayers();
+    gridLayer.clearLayers();
+
+    if (!rectCornersEN) return;
+
+    // Draw rectangle outline
+    const ring = [...rectCornersEN, rectCornersEN[0]].map(p => enToLatLng(p.e, p.n));
+    L.polyline(ring, { weight: 3, opacity: 0.9 }).addTo(rectLayer);
+
+    // Build grid lines inside rectangle in local coords:
+    // local origin at P1, x in [0..L] along u, y in [0..W] along w
+    const spacing = parseFloat(gridSpacingEl.value);
+    if (!(spacing > 0)) return;
+
+    // Snap line positions so border is included
+    const nx = Math.max(1, Math.round(rectLen / spacing));
+    const ny = Math.max(1, Math.round(rectWid / spacing));
+    const sx = rectLen / nx;
+    const sy = rectWid / ny;
+
+    const p1 = rectP1; // EN
+    const u = rectU;
+    const w = rectW;
+
+    function localToEN(x, y) {
+      return { e: p1.e + u.e * x + w.e * y, n: p1.n + u.n * x + w.n * y };
+    }
+
+    // Vertical-ish lines (parallel to width)
+    for (let i = 0; i <= nx; i++) {
+      const x = i * sx;
+      const a = localToEN(x, 0);
+      const b = localToEN(x, rectWid);
+      L.polyline([enToLatLng(a.e,a.n), enToLatLng(b.e,b.n)], { weight: 2, opacity: 0.85 }).addTo(gridLayer);
+    }
+
+    // Horizontal-ish lines (parallel to length)
+    for (let j = 0; j <= ny; j++) {
+      const y = j * sy;
+      const a = localToEN(0, y);
+      const b = localToEN(rectLen, y);
+      L.polyline([enToLatLng(a.e,a.n), enToLatLng(b.e,b.n)], { weight: 2, opacity: 0.85 }).addTo(gridLayer);
+    }
+  }
+
+  // ---------------------------
+  // Boundary drawing
+  // ---------------------------
+  const drawBoundaryBtn = document.getElementById('drawBoundaryBtn');
+  const finishBoundaryBtn = document.getElementById('finishBoundaryBtn');
+  const clearBoundaryBtn = document.getElementById('clearBoundaryBtn');
+
+  function redrawBoundaryPreview() {
+    if (boundaryPreviewLine) boundaryPreviewLine.remove();
+    boundaryPointsLayer.clearLayers();
+
+    if (boundaryLatLngs.length === 0) {
+      boundaryPreviewLine = null;
+      finishBoundaryBtn.disabled = true;
+      clearBoundaryBtn.disabled = true;
+      return;
+    }
+
+    boundaryPreviewLine = L.polyline(boundaryLatLngs, { weight: 3, opacity: 0.9 }).addTo(map);
+    boundaryLatLngs.forEach(ll => {
+      L.circleMarker(ll, { radius: 5, weight: 2, opacity: 0.9, fillOpacity: 0.2 }).addTo(boundaryPointsLayer);
+    });
+
+    finishBoundaryBtn.disabled = boundaryLatLngs.length < 2;
+    clearBoundaryBtn.disabled = false;
+  }
+
+  // ---------------------------
+  // DXF export
+  // ---------------------------
+  const DXF_COLOR_RED = 1;
+  const DXF_COLOR_BLUE = 5;
+
+  function dxfLineEntity(x1, y1, x2, y2, layer, aciColor) {
+    return [
+      "0","LINE",
+      "8", layer,
+      "62", String(aciColor),
+      "10", x1.toFixed(3),
+      "20", y1.toFixed(3),
+      "30", "0.000",
+      "11", x2.toFixed(3),
+      "21", y2.toFixed(3),
+      "31", "0.000"
+    ].join("\n") + "\n";
+  }
+
+  function dxfLWPolyline(pointsXY, layer, aciColor, closed=false) {
+    const flag = closed ? 1 : 0;
+    let out = "";
+    out += "0\nLWPOLYLINE\n";
+    out += "8\n" + layer + "\n";
+    out += "62\n" + String(aciColor) + "\n";
+    out += "90\n" + String(pointsXY.length) + "\n";
+    out += "70\n" + String(flag) + "\n";
+    for (const p of pointsXY) {
+      out += "10\n" + p.x.toFixed(3) + "\n";
+      out += "20\n" + p.y.toFixed(3) + "\n";
+    }
+    return out;
+  }
+
+  function exportDXF() {
+    if (!rectP1 || !rectCornersEN) { alert("Define the 3-point rectangle first."); return; }
+
+    const spacing = parseFloat(gridSpacingEl.value);
+    if (!(spacing > 0)) { alert("Grid spacing must be > 0."); return; }
+
+    const gridLayerName = (layerNameEl.value || "GRID").trim();
+    const bndLayerName = (boundaryLayerNameEl.value || "BOUNDARY").trim();
+    const rel = !!relativeExportEl.checked;
+
+    const origin = rectP1; // EN
+    const u = rectU;
+    const w = rectW;
+    const L = rectLen;
+    const W = rectWid;
+
+    const nx = Math.max(1, Math.round(L / spacing));
+    const ny = Math.max(1, Math.round(W / spacing));
+    const sx = L / nx;
+    const sy = W / ny;
+
+    function localToEN(x, y) {
+      return { e: origin.e + u.e * x + w.e * y, n: origin.n + u.n * x + w.n * y };
+    }
+    function toOut(en) {
+      return rel ? { x: en.e - origin.e, y: en.n - origin.n } : { x: en.e, y: en.n };
+    }
+
+    let dxf = "";
+    dxf += "0\nSECTION\n2\nHEADER\n";
+    dxf += "9\n$INSUNITS\n70\n6\n";
+    dxf += "0\nENDSEC\n";
+    dxf += "0\nSECTION\n2\nENTITIES\n";
+
+    // Grid BLUE (lines inside rectangle)
+    for (let i = 0; i <= nx; i++) {
+      const x = i * sx;
+      const a = toOut(localToEN(x, 0));
+      const b = toOut(localToEN(x, W));
+      dxf += dxfLineEntity(a.x, a.y, b.x, b.y, gridLayerName, DXF_COLOR_BLUE);
+    }
+    for (let j = 0; j <= ny; j++) {
+      const y = j * sy;
+      const a = toOut(localToEN(0, y));
+      const b = toOut(localToEN(L, y));
+      dxf += dxfLineEntity(a.x, a.y, b.x, b.y, gridLayerName, DXF_COLOR_BLUE);
+    }
+
+    // Boundary RED
+    if (boundaryLatLngs.length >= 2) {
+      const bxy = boundaryLatLngs.map(ll => {
+        const en = latLngToEN(ll);
+        const o = rel ? { x: en.e - origin.e, y: en.n - origin.n } : { x: en.e, y: en.n };
+        return o;
+      });
+      dxf += dxfLWPolyline(bxy, bndLayerName, DXF_COLOR_RED, false);
+    }
+
+    dxf += "0\nENDSEC\n0\nEOF\n";
+
+    const blob = new Blob([dxf], { type: "application/dxf" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.style.display = "none";
+    a.rel = "noopener";
+    a.target = "_blank";
+
+    const name = `rectgrid_${rel ? "REL_P1" : "OSGB"}_${Math.round(L)}x${Math.round(W)}_${spacing}m.dxf`;
+    a.download = name;
+
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => window.open(url, "_blank"), 250);
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  // ---------------------------
+  // Click handling
+  // ---------------------------
+  document.getElementById('rect3Btn').addEventListener('click', () => {
+    setMode('rect3');
+    clearRectangle();
+    statusBox.textContent = 'Rectangle mode: pick P1, then P2, then P3.';
+    modeBadge.textContent = 'pick P1';
   });
 
-  window.addEventListener('unhandledrejection', (event) => {
-    console.error('Unhandled promise rejection:', event.reason);
-    UI.showError('Async error: ' + (event.reason?.message || 'Unknown error'));
+  map.on('click', (e) => {
+    const picked = getPickLatLng(e.latlng);
+
+    if (mode === 'boundary') {
+      boundaryLatLngs.push(picked);
+      redrawBoundaryPreview();
+      return;
+    }
+
+    if (mode !== 'rect3') return;
+
+    // Rectangle 3-point picking
+    const en = latLngToEN(picked);
+
+    if (!rectP1) {
+      rectP1 = en;
+      pickLayer.clearLayers();
+      drawPickPoint(picked, 'P1');
+      modeBadge.textContent = 'pick P2';
+      statusBox.textContent = 'Picked P1. Now pick P2 (length + rotation).';
+      return;
+    }
+
+    if (!rectP2) {
+      rectP2 = en;
+      drawPickPoint(picked, 'P2');
+      modeBadge.textContent = 'pick P3';
+      statusBox.textContent = 'Picked P2. Now pick P3 (width).';
+      return;
+    }
+
+    if (!rectP3) {
+      rectP3 = en;
+      drawPickPoint(picked, 'P3');
+
+      const res = computeRectangleFrom3Pts(rectP1, rectP2, rectP3);
+      if (!res) {
+        statusBox.textContent = 'Bad rectangle (points too close / width ~0). Try again.';
+        clearRectangle();
+        modeBadge.textContent = 'pick P1';
+        return;
+      }
+
+      rectLen = res.L;
+      rectWid = res.W;
+      rectU = res.u;
+      rectW = res.w;
+      rectCornersEN = res.corners;
+
+      rectInfoEl.textContent = `${rectLen.toFixed(2)} m × ${rectWid.toFixed(2)} m`;
+      statusBox.textContent = `Rectangle set: L=${rectLen.toFixed(2)}m, W=${rectWid.toFixed(2)}m. Grid drawn.`;
+      modeBadge.textContent = 'done';
+
+      redrawRectangleAndGrid();
+      // stay in rect3 mode in case you want to re-pick with the button
+    }
   });
 
-  // ============================================================================
-  // STARTUP
-  // ============================================================================
-  
-  (async function initialize() {
-    UI.updateRotationDisplay();
-    UI.updateBoundaryButtons();
-    UI.updateExportButton();
-    UI.showStatus('Initializing...');
-    
-    await initializeOSTN15();
-    
-    UI.showStatus('Ready! Click map to pick Point 1 (starting corner)');
-  })();
+  // ---------------------------
+  // Buttons / toggles
+  // ---------------------------
+  document.getElementById('gpsBtn').addEventListener('click', () => {
+    map.locate({ setView: true, maxZoom: 19, enableHighAccuracy: true, timeout: 15000 });
+  });
 
+  map.on('locationfound', (e) => {
+    if (window._gpsAccuracy) window._gpsAccuracy.remove();
+    window._gpsAccuracy = L.circle(e.latlng, {
+      radius: e.accuracy,
+      weight: 1,
+      opacity: 0.6,
+      fillOpacity: 0.08
+    }).addTo(map);
+    statusBox.textContent = `GPS found (±${Math.round(e.accuracy)}m).`;
+  });
+
+  map.on('locationerror', (e) => {
+    alert("Couldn't get GPS location: " + (e.message || "permission denied / unavailable"));
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', () => {
+    setMode('idle');
+    clearRectangle();
+
+    boundaryLatLngs = [];
+    if (boundaryPreviewLine) boundaryPreviewLine.remove();
+    boundaryPreviewLine = null;
+    boundaryPointsLayer.clearLayers();
+    redrawBoundaryPreview();
+
+    statusBox.textContent = 'Reset.';
+  });
+
+  exportBtn.addEventListener('click', exportDXF);
+
+  drawBoundaryBtn.addEventListener('click', () => {
+    setMode('boundary');
+    statusBox.textContent = 'Boundary mode: tap points, then Finish boundary.';
+  });
+
+  finishBoundaryBtn.addEventListener('click', () => {
+    setMode('idle');
+    statusBox.textContent = 'Boundary finished.';
+  });
+
+  clearBoundaryBtn.addEventListener('click', () => {
+    boundaryLatLngs = [];
+    if (boundaryPreviewLine) boundaryPreviewLine.remove();
+    boundaryPreviewLine = null;
+    boundaryPointsLayer.clearLayers();
+    redrawBoundaryPreview();
+    statusBox.textContent = 'Boundary cleared.';
+  });
+
+  gridSpacingEl.addEventListener('input', () => {
+    if (rectCornersEN) redrawRectangleAndGrid();
+  });
+
+  useCrosshairEl.addEventListener('change', () => {
+    crosshairEl.style.display = useCrosshairEl.checked ? 'block' : 'none';
+  });
+
+  // ---------------------------
+  // Bottom sheet snapping
+  // ---------------------------
+  const sheet = document.getElementById('sheet');
+  const handle = document.getElementById('handle');
+  const snaps = { open: 6, half: 44, closed: 66 };
+
+  let currentSnap = 'half';
+  setSheetSnap(currentSnap);
+
+  function setSheetSnap(which) {
+    currentSnap = which;
+    sheet.style.transform = `translateY(${snaps[which]}vh)`;
+    sheet.classList.toggle('is-collapsed', which === 'closed');
+  }
+
+  handle.addEventListener('click', () => {
+    setSheetSnap(currentSnap === 'closed' ? 'half' : 'closed');
+  });
+
+  let dragging = false, startY = 0, startTranslateVh = snaps[currentSnap], hasMoved = false;
+
+  function getTranslateVhFromStyle() {
+    const m = sheet.style.transform.match(/translateY\(([-0-9.]+)vh\)/);
+    return m ? parseFloat(m[1]) : snaps.half;
+  }
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+  handle.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    hasMoved = false;
+    handle.setPointerCapture(e.pointerId);
+    sheet.style.transition = 'none';
+    startY = e.clientY;
+    startTranslateVh = getTranslateVhFromStyle();
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dyPx = e.clientY - startY;
+    if (Math.abs(dyPx) > 6) hasMoved = true;
+
+    const vhPx = window.innerHeight / 100;
+    const dyVh = dyPx / vhPx;
+
+    let next = startTranslateVh + dyVh;
+    next = clamp(next, 0, 72);
+    sheet.style.transform = `translateY(${next}vh)`;
+  });
+
+  handle.addEventListener('pointerup', () => {
+    if (!dragging) return;
+    dragging = false;
+    sheet.style.transition = 'transform 180ms ease';
+
+    if (!hasMoved) return;
+
+    const now = getTranslateVhFromStyle();
+    const options = Object.entries(snaps);
+    let best = options[0];
+    for (const opt of options) {
+      if (Math.abs(opt[1] - now) < Math.abs(best[1] - now)) best = opt;
+    }
+    setSheetSnap(best[0]);
+  });
+
+  // Startup
+  redrawBoundaryPreview();
+  setMode('idle');
+  loadOSTN15();
+  statusBox.textContent = 'Ready. Search top-right, GPS optional. Tap "Define rectangle".';
 </script>
 </body>
 </html>

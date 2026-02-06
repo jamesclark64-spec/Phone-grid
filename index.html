@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>SurveyGrid Pro</title>
+    <title>SurveyGrid Pro (Stable)</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
@@ -12,7 +12,6 @@
         body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; overflow: hidden; }
         #map { position: absolute; top: 0; bottom: 0; width: 100%; z-index: 1; }
         
-        /* Floating Controls */
         .ui-panel {
             position: absolute; bottom: 20px; left: 10px; right: 10px;
             background: rgba(255, 255, 255, 0.95);
@@ -20,7 +19,7 @@
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
             z-index: 1000;
             display: flex; flex-direction: column; gap: 10px;
-            max-height: 35vh; overflow-y: auto;
+            max-height: 40vh; overflow-y: auto;
         }
 
         .tool-bar {
@@ -32,24 +31,25 @@
             background: #007AFF; color: white; border: none; padding: 12px;
             border-radius: 8px; font-weight: 600; cursor: pointer;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            transition: background 0.2s;
         }
-        button:active { transform: scale(0.98); }
         button.active { background: #34C759; }
-        
+
         .input-group { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
         label { font-size: 14px; font-weight: 500; color: #333; }
-        input[type="number"] { width: 70px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+        input[type="number"] { width: 70px; padding: 8px; border: 1px solid #ccc; border-radius: 6px; }
 
-        /* Grips */
+        /* Robust Grip Styles */
         .grip-icon {
-            background: white; border: 2px solid #007AFF;
-            border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+            background: white; border: 3px solid #007AFF;
+            border-radius: 50%; box-shadow: 0 3px 8px rgba(0,0,0,0.4);
+            transition: transform 0.1s;
         }
+        .grip-center { background: rgba(255, 255, 255, 0.8); border: 2px solid red; cursor: move; }
         .grip-rotate { border-color: #FF9500; cursor: grab; }
         .grip-resize { border-color: #34C759; cursor: nwse-resize; }
-        /* Center grip is invisible touch target, visualized by red dot in code */
-        .grip-center { background: transparent; border: none; box-shadow: none; cursor: move; }
+        
+        /* Visual feedback when dragging */
+        .leaflet-dragging .grip-icon { transform: scale(1.2); }
 
     </style>
 </head>
@@ -66,19 +66,19 @@
     <div class="ui-panel">
         <div class="input-group">
             <label>Grid Spacing (m)</label>
-            <input type="number" id="gridSpacing" value="10" min="1" oninput="scheduleUpdate()">
+            <input type="number" id="gridSpacing" value="10" onchange="commitGridUpdate()">
         </div>
         <div class="input-group">
             <label>Width (m)</label>
-            <input type="number" id="gridWidth" value="300" oninput="scheduleUpdate()">
+            <input type="number" id="gridWidth" value="300" onchange="commitGridUpdate()">
         </div>
         <div class="input-group">
             <label>Height (m)</label>
-            <input type="number" id="gridHeight" value="300" oninput="scheduleUpdate()">
+            <input type="number" id="gridHeight" value="300" onchange="commitGridUpdate()">
         </div>
         <button onclick="exportDXF()">💾 Export DXF</button>
         <div id="status" style="font-size: 11px; color: #666; text-align: center; margin-top:5px;">
-            Drag grips to adjust.
+            Drag grips. Grid updates on release.
         </div>
     </div>
 
@@ -87,10 +87,10 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js"></script>
 
     <script>
-        // --- SETUP ---
+        // --- 1. SETUP ---
         proj4.defs("EPSG:27700","+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs");
         
-        const map = L.map('map').setView([51.505, -0.09], 17);
+        const map = L.map('map').setView([51.505, -0.09], 16);
         
         L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
             attribution: 'Tiles &copy; Esri', maxZoom: 21
@@ -101,7 +101,11 @@
             moveGridTo(e.geocode.center);
         }).addTo(map);
 
-        // --- APP STATE ---
+        // --- 2. LAYERS ---
+        const gridLayer = L.layerGroup().addTo(map);     // The complex grid lines
+        const ghostLayer = L.layerGroup().addTo(map);    // The simple box shown while dragging
+        const boundaryLayer = L.layerGroup().addTo(map); 
+        
         let gridState = {
             center: map.getCenter(),
             width: 300,
@@ -110,70 +114,34 @@
             spacing: 10
         };
 
-        // Layers
-        // interactive: false is KEY so grid lines don't block mouse clicks on the map/grips
-        const gridLayer = L.layerGroup().addTo(map);
-        const boundaryLayer = L.layerGroup().addTo(map);
-        
-        // --- GRIPS ---
-        // We create them once and move them.
-        const gripIconSize = [24, 24]; // Larger touch target
+        // --- 3. GRIP CREATION ---
+        const gripSize = [24, 24]; // Big easy targets
         
         const centerGrip = L.marker(gridState.center, {
-            draggable: true, zIndexOffset: 1000,
-            icon: L.divIcon({className: 'grip-icon grip-center', html:'<div style="width:10px;height:10px;background:red;border:2px solid white;border-radius:50%;margin:7px;"></div>', iconSize: gripIconSize})
+            draggable: true, autoPan: false, zIndexOffset: 2000,
+            icon: L.divIcon({className: 'grip-icon grip-center', html:'<div style="width:6px;height:6px;background:red;border-radius:50%;margin:9px;"></div>', iconSize: gripSize})
         }).addTo(map);
 
         const rotateGrip = L.marker(gridState.center, {
-            draggable: true, zIndexOffset: 1000,
-            icon: L.divIcon({className: 'grip-icon grip-rotate', iconSize: [16,16]})
+            draggable: true, autoPan: false, zIndexOffset: 2000,
+            icon: L.divIcon({className: 'grip-icon grip-rotate', iconSize: [20,20]})
         }).addTo(map);
 
         const resizeGrip = L.marker(gridState.center, {
-            draggable: true, zIndexOffset: 1000,
-            icon: L.divIcon({className: 'grip-icon grip-resize', iconSize: [16,16]})
+            draggable: true, autoPan: false, zIndexOffset: 2000,
+            icon: L.divIcon({className: 'grip-icon grip-resize', iconSize: [20,20]})
         }).addTo(map);
 
-        // --- RENDERING LOOP (Performance Optimized) ---
-        let isRenderPending = false;
 
-        function scheduleUpdate() {
-            // Read inputs safely
-            const w = parseFloat(document.getElementById('gridWidth').value);
-            const h = parseFloat(document.getElementById('gridHeight').value);
-            const s = parseFloat(document.getElementById('gridSpacing').value);
+        // --- 4. DRAG HANDLERS (The Fix) ---
 
-            // Validation to prevent vanishing
-            if(w && !isNaN(w)) gridState.width = w;
-            if(h && !isNaN(h)) gridState.height = h;
-            if(s && !isNaN(s) && s > 0) gridState.spacing = s;
-
-            requestRender();
-        }
-
-        function requestRender() {
-            if (!isRenderPending) {
-                requestAnimationFrame(() => {
-                    renderGrid();
-                    isRenderPending = false;
-                });
-                isRenderPending = true;
-            }
-        }
-
-        function getCorners() {
-            const w = gridState.width;
-            const h = gridState.height;
-            const c = gridState.center;
-            const r = gridState.rotation;
-            
-            // Approximate meter conversions
+        // Helper: Calculate corners based on current state
+        function getComputedCorners(center, w, h, rot) {
             const mLat = 1/111132;
-            const mLng = 1/(111320 * Math.cos(c.lat * Math.PI/180));
-            const cos = Math.cos(r);
-            const sin = Math.sin(r);
+            const mLng = 1/(111320 * Math.cos(center.lat * Math.PI/180));
+            const cos = Math.cos(rot);
+            const sin = Math.sin(rot);
 
-            // Offsets from center
             const offsets = [
                 {x: -w/2, y: h/2}, // TL (Resize)
                 {x: w/2, y: h/2},  // TR (Rotate)
@@ -184,107 +152,172 @@
             return offsets.map(o => {
                 const rx = o.x * cos - o.y * sin;
                 const ry = o.x * sin + o.y * cos;
-                return L.latLng(c.lat + ry * mLat, c.lng + rx * mLng);
+                return L.latLng(center.lat + ry * mLat, center.lng + rx * mLng);
             });
         }
 
-        function renderGrid() {
-            gridLayer.clearLayers();
-            const corners = getCorners();
-
-            // 1. Draw Outline (interactive: false prevents blocking clicks)
-            L.polygon(corners, {color: '#007AFF', weight: 2, fill: false, interactive: false}).addTo(gridLayer);
-
-            // 2. Draw Internal Grid
-            const stepsX = Math.floor(gridState.width / gridState.spacing);
-            const stepsY = Math.floor(gridState.height / gridState.spacing);
-
-            const lerp = (p1, p2, t) => L.latLng(
-                p1.lat + (p2.lat - p1.lat) * t,
-                p1.lng + (p2.lng - p1.lng) * t
-            );
-
-            // Limit lines to prevent browser crash if spacing is too small
-            if(stepsX < 200 && stepsY < 200) {
-                // Vertical
-                for(let i=1; i<=stepsX; i++) {
-                    const t = (i * gridState.spacing) / gridState.width;
-                    const p1 = lerp(corners[3], corners[2], t);
-                    const p2 = lerp(corners[0], corners[1], t);
-                    L.polyline([p1, p2], {color: '#007AFF', weight: 1, opacity: 0.4, interactive: false}).addTo(gridLayer);
-                }
-                // Horizontal
-                for(let i=1; i<=stepsY; i++) {
-                    const t = (i * gridState.spacing) / gridState.height;
-                    const p1 = lerp(corners[3], corners[0], t);
-                    const p2 = lerp(corners[2], corners[1], t);
-                    L.polyline([p1, p2], {color: '#007AFF', weight: 1, opacity: 0.4, interactive: false}).addTo(gridLayer);
-                }
-            }
-
-            // 3. Move Grips (Only if not being dragged by user)
-            // This prevents "fighting" the mouse cursor
-            if(!centerGrip._dragging) centerGrip.setLatLng(gridState.center);
-            if(!rotateGrip._dragging) rotateGrip.setLatLng(corners[1]); // TR
-            if(!resizeGrip._dragging) resizeGrip.setLatLng(corners[0]); // TL
-        }
-
-        // --- DRAG LOGIC ---
-        // Flags to track active dragging
-        centerGrip.on('dragstart', () => { centerGrip._dragging = true; });
+        // --- A. CENTER DRAG ---
+        centerGrip.on('dragstart', () => {
+            map.dragging.disable(); // Lock map
+            gridLayer.clearLayers(); // Hide heavy grid
+            renderGhost(gridState.center, gridState.width, gridState.height, gridState.rotation);
+        });
+        
         centerGrip.on('drag', (e) => {
-            gridState.center = e.latlng;
-            requestRender();
-        });
-        centerGrip.on('dragend', (e) => { 
-            centerGrip._dragging = false; 
-            gridState.center = e.latlng;
-            requestRender();
+            // Just move the ghost box, don't do math
+            renderGhost(e.latlng, gridState.width, gridState.height, gridState.rotation);
+            // Move other grips along visually
+            updateGripPositions(e.latlng, gridState.width, gridState.height, gridState.rotation);
         });
 
-        rotateGrip.on('dragstart', () => { rotateGrip._dragging = true; });
+        centerGrip.on('dragend', (e) => {
+            map.dragging.enable(); // Unlock map
+            gridState.center = e.latlng;
+            commitGridUpdate(); // Draw full grid
+        });
+
+        // --- B. ROTATE DRAG (Top Right) ---
+        rotateGrip.on('dragstart', () => {
+            map.dragging.disable();
+            gridLayer.clearLayers();
+            renderGhost(gridState.center, gridState.width, gridState.height, gridState.rotation);
+        });
+
         rotateGrip.on('drag', (e) => {
             const centerPt = map.latLngToLayerPoint(gridState.center);
             const mousePt = map.latLngToLayerPoint(e.latlng);
+            
+            // Calculate angle
             const dx = mousePt.x - centerPt.x;
             const dy = mousePt.y - centerPt.y;
-            // Calculate angle relative to horizontal, corrected for TR corner offset (-45deg)
-            gridState.rotation = Math.atan2(dy, dx) + (Math.PI/4);
-            requestRender();
-        });
-        rotateGrip.on('dragend', () => { 
-            rotateGrip._dragging = false; 
-            requestRender(); 
+            // Angle correction: TR corner is naturally at -45deg (top right)
+            let newRotation = Math.atan2(dy, dx) + (Math.PI/4);
+            
+            // Update Ghost only
+            renderGhost(gridState.center, gridState.width, gridState.height, newRotation);
+            
+            // We store this temporarily in the object so resize grip follows correctly
+            gridState.rotation = newRotation; 
         });
 
-        resizeGrip.on('dragstart', () => { resizeGrip._dragging = true; });
+        rotateGrip.on('dragend', () => {
+            map.dragging.enable();
+            commitGridUpdate();
+        });
+
+        // --- C. RESIZE DRAG (Top Left) ---
+        resizeGrip.on('dragstart', () => {
+            map.dragging.disable();
+            gridLayer.clearLayers();
+            renderGhost(gridState.center, gridState.width, gridState.height, gridState.rotation);
+        });
+
         resizeGrip.on('drag', (e) => {
             const dist = map.distance(gridState.center, e.latlng);
-            const size = Math.max(10, Math.round(dist * 1.414)); // Min size 10m
-            gridState.width = size;
-            gridState.height = size;
+            const newSize = Math.max(10, dist * 1.414); // Square approx
             
-            // Sync inputs (optional, maybe skip during drag for speed)
-            document.getElementById('gridWidth').value = size;
-            document.getElementById('gridHeight').value = size;
+            // Update Ghost
+            renderGhost(gridState.center, newSize, newSize, gridState.rotation);
             
-            requestRender();
+            // Store temp
+            gridState.width = newSize;
+            gridState.height = newSize;
         });
-        resizeGrip.on('dragend', () => { 
-            resizeGrip._dragging = false; 
-            requestRender(); 
+
+        resizeGrip.on('dragend', () => {
+            map.dragging.enable();
+            // Update Inputs
+            document.getElementById('gridWidth').value = Math.round(gridState.width);
+            document.getElementById('gridHeight').value = Math.round(gridState.height);
+            commitGridUpdate();
         });
 
 
-        // --- UTILS & BOUNDARY ---
+        // --- 5. RENDERING LOGIC ---
+
+        // Fast render (Outline only)
+        function renderGhost(center, w, h, rot) {
+            ghostLayer.clearLayers();
+            const corners = getComputedCorners(center, w, h, rot);
+            
+            L.polygon(corners, {
+                color: '#ff9500', weight: 2, dashArray: '5, 5', fill: false
+            }).addTo(ghostLayer);
+
+            // Keep grips attached to corners visually
+            // Note: We don't setLatLng on the grip being dragged (Leaflet does that),
+            // but we must move the *other* grips.
+            if(!rotateGrip._dragging) rotateGrip.setLatLng(corners[1]); // TR
+            if(!resizeGrip._dragging) resizeGrip.setLatLng(corners[0]); // TL
+            if(!centerGrip._dragging) centerGrip.setLatLng(center);
+        }
+
+        // Slow render (Full Grid) - Called only on DragEnd
+        function commitGridUpdate() {
+            // Read inputs in case they changed manually
+            gridState.spacing = parseFloat(document.getElementById('gridSpacing').value);
+            gridState.width = parseFloat(document.getElementById('gridWidth').value);
+            gridState.height = parseFloat(document.getElementById('gridHeight').value);
+
+            ghostLayer.clearLayers();
+            gridLayer.clearLayers();
+
+            const corners = getComputedCorners(gridState.center, gridState.width, gridState.height, gridState.rotation);
+
+            // 1. Outline
+            L.polygon(corners, {color: '#007AFF', weight: 3, fill: false, interactive: false}).addTo(gridLayer);
+
+            // 2. Internal Lines (The heavy part)
+            const w = gridState.width;
+            const h = gridState.height;
+            const s = gridState.spacing;
+            
+            // Limit checks
+            if(s <= 0.5) return; // Prevent crash on 0 spacing
+            
+            // Lerp helper
+            const lerp = (p1, p2, t) => L.latLng(p1.lat + (p2.lat - p1.lat)*t, p1.lng + (p2.lng - p1.lng)*t);
+
+            const stepsX = Math.floor(w/s);
+            const stepsY = Math.floor(h/s);
+            
+            // Cap at 300 lines to prevent browser freeze
+            if(stepsX > 300 || stepsY > 300) {
+                alert("Grid too dense to display. Export will still work.");
+            } else {
+                for(let i=1; i<=stepsX; i++) {
+                    let t = (i*s)/w;
+                    L.polyline([lerp(corners[3], corners[2], t), lerp(corners[0], corners[1], t)], 
+                        {color: '#007AFF', weight: 1, opacity: 0.4, interactive: false}).addTo(gridLayer);
+                }
+                for(let i=1; i<=stepsY; i++) {
+                    let t = (i*s)/h;
+                    L.polyline([lerp(corners[3], corners[0], t), lerp(corners[2], corners[1], t)], 
+                        {color: '#007AFF', weight: 1, opacity: 0.4, interactive: false}).addTo(gridLayer);
+                }
+            }
+
+            // Ensure grips are in final correct spots
+            updateGripPositions(gridState.center, w, h, gridState.rotation);
+        }
+
+        function updateGripPositions(c, w, h, r) {
+            const corners = getComputedCorners(c, w, h, r);
+            if(!rotateGrip._dragging) rotateGrip.setLatLng(corners[1]);
+            if(!resizeGrip._dragging) resizeGrip.setLatLng(corners[0]);
+            if(!centerGrip._dragging) centerGrip.setLatLng(c);
+        }
+
+
+        // --- 6. UTILITIES ---
         function moveGridTo(latlng) {
             gridState.center = latlng;
-            requestRender();
+            commitGridUpdate();
         }
 
         function resetRotation() {
             gridState.rotation = 0;
-            requestRender();
+            commitGridUpdate();
         }
 
         function locateUser() {
@@ -292,17 +325,19 @@
             map.once('locationfound', e => moveGridTo(e.latlng));
         }
 
+        // --- 7. BOUNDARY TOOL ---
         let isBoundaryMode = false;
         let boundaryPoints = [];
 
         function toggleBoundaryMode() {
             isBoundaryMode = !isBoundaryMode;
             const btn = document.getElementById('btn-boundary');
+            
             if(isBoundaryMode) {
                 btn.classList.add('active');
                 btn.innerText = 'Finish Drawing';
                 map.getContainer().style.cursor = 'crosshair';
-                // Hide grips while drawing to avoid clutter
+                // Hide grips
                 centerGrip.setOpacity(0); rotateGrip.setOpacity(0); resizeGrip.setOpacity(0);
             } else {
                 btn.classList.remove('active');
@@ -317,8 +352,8 @@
             boundaryPoints.push(e.latlng);
             renderBoundary();
         });
-
-        map.on('contextmenu', (e) => {
+        
+        map.on('contextmenu', (e) => { // Right click undo
             if(isBoundaryMode && boundaryPoints.length > 0) {
                 boundaryPoints.pop();
                 renderBoundary();
@@ -336,7 +371,7 @@
             }
         }
 
-        // --- EXPORT DXF ---
+        // --- 8. EXPORT DXF ---
         function exportDXF() {
             const osCenter = proj4("EPSG:4326", "EPSG:27700", [gridState.center.lng, gridState.center.lat]);
             let dxf = [
@@ -387,8 +422,8 @@
             link.click();
         }
 
-        // Initialize
-        requestRender();
+        // Init
+        commitGridUpdate();
 
     </script>
 </body>

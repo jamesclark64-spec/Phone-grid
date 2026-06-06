@@ -268,6 +268,12 @@
       <input id="snap10" type="checkbox" checked />
     </div>
 
+    <div class="field" style="margin-top:10px;">
+      <label for="gridSpacing">Grid spacing (m)</label>
+      <input id="gridSpacing" type="number" min="0.1" step="0.1" value="10" />
+      <div class="hint" id="spacingHint">Locked to 10.000m (snap ON)</div>
+    </div>
+
     <div class="grid2">
       <div class="field">
         <label>Shape</label>
@@ -297,11 +303,6 @@
     </div>
 
     <div class="grid2 advanced">
-      <div class="field">
-        <label for="gridSpacing">Grid spacing (m)</label>
-        <input id="gridSpacing" type="number" min="0.1" step="0.1" value="10" />
-        <div class="hint" id="spacingHint">Locked to 10.000m (snap ON)</div>
-      </div>
       <div class="field">
         <label for="simplifyTol">Boundary simplify (m)</label>
         <input id="simplifyTol" type="number" min="0" step="0.1" value="0.5" />
